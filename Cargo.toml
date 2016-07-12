@@ -1,0 +1,8 @@
+[package]
+name = "drm"
+description = "Safe interface for accessing the Direct Rendering Management system"
+version = "0.0.0"
+authors = ["Tyler Slabinski <tslabinski@slabity.net>"]
+license = "LGPL-3.0"
+repository = "https://gitlab.com/slabity/drm-rs"
+
