@@ -1,8 +1,11 @@
+use super::ffi;
+use super::error::{Error, Result};
+
+use libc::ioctl;
+
 use std::os::unix::io::{RawFd, AsRawFd, FromRawFd, IntoRawFd};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-
-use super::error::{Error, Result};
 
 pub struct Device {
     file: File
@@ -34,5 +37,23 @@ impl Device {
         };
         Ok(dev)
     }
+
+    pub fn resources(&self) {
+        let res = ffi::drm_ioctl_mode_get_resources(self.as_raw_fd());
+
+        println!("{:#?}", res);
+    }
+}
+
+pub struct ConnectorId(u32);
+pub struct EncoderId(u32);
+pub struct CrtcId(u32);
+pub struct FramebufferId(u32);
+
+pub struct Resources {
+    connectors: Vec<ConnectorId>,
+    encoders: Vec<EncoderId>,
+    crtcs: Vec<CrtcId>,
+    framebuffers: Vec<FramebufferId>
 }
 
