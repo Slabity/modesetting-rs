@@ -29,12 +29,10 @@ pub fn drm_ioctl_mode_get_resources(fd: RawFd) -> DrmModeCardRes {
     let mut fbs = vec![0u32; raw_res.count_fbs as usize];
 
     // Let's use the above vectors as buffers for the resources
-    unsafe {
-        raw_res.connector_id_ptr = conns.as_mut_slice().as_mut_ptr() as u64;
-        raw_res.encoder_id_ptr = encs.as_mut_slice().as_mut_ptr() as u64;
-        raw_res.crtc_id_ptr = crtcs.as_mut_slice().as_mut_ptr() as u64;
-        raw_res.fb_id_ptr = fbs.as_mut_slice().as_mut_ptr() as u64;
-    }
+    raw_res.connector_id_ptr = conns.as_mut_slice().as_mut_ptr() as u64;
+    raw_res.encoder_id_ptr = encs.as_mut_slice().as_mut_ptr() as u64;
+    raw_res.crtc_id_ptr = crtcs.as_mut_slice().as_mut_ptr() as u64;
+    raw_res.fb_id_ptr = fbs.as_mut_slice().as_mut_ptr() as u64;
 
     // The second time we call it, all buffers will be filled
     unsafe { ioctl(fd, FFI_DRM_IOCTL_MODE_GETRESOURCES, &raw_res) };
