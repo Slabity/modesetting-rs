@@ -1,4 +1,5 @@
 extern crate libc;
+extern crate errno;
 
 mod ffi;
 pub mod error;

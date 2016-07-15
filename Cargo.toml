@@ -13,3 +13,4 @@ bindgen = "*"
 
 [dependencies]
 libc = "*"
+errno = "*"
