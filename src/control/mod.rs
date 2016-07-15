@@ -81,9 +81,27 @@ pub struct FramebufferIterator {
 }
 
 impl Iterator for ConnectorIterator {
-    type Item = ConnectorId;
-    fn next(&mut self) -> Option<ConnectorId> {
-        self.connectors.next()
+    type Item = Result<Connector>;
+    fn next(&mut self) -> Option<Result<Connector>> {
+        // Get the raw id of the connector
+        let raw_id = match self.connectors.next() {
+            Some(id) => id.0,
+            None => return None
+        };
+
+        // Get the raw results
+        let con_res = ffi::drm_ioctl_mode_get_connector(self.device.as_raw_fd(), raw_id);
+        let ffi_con = match con_res {
+            Err(e) => return Some(Err(e)),
+            Ok(c) => c
+        };
+
+        unsafe {
+            Some(Ok(Connector {
+                encoders: transmute(ffi_con.encoders),
+                size: ffi_con.size
+            }))
+        }
     }
 }
 
@@ -145,5 +163,11 @@ impl Resources {
             framebuffers: self.framebuffers.clone().into_iter()
         }
     }
+}
+
+#[derive(Debug)]
+pub struct Connector {
+    encoders: Vec<EncoderId>,
+    size: (u32, u32)
 }
 
