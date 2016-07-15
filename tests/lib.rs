@@ -4,5 +4,6 @@ use drm::control::Device;
 
 #[test]
 fn control() {
-    let dev = Device::open("/dev/dri/controlD64").unwrap();
+    let control = Device::open("/dev/dri/controlD64").unwrap();
+    println!("{:#?}", control.resources().unwrap());
 }
