@@ -37,7 +37,7 @@ impl Device {
     }
 
     pub fn resources(&self) -> Result<Resources> {
-        let res = try!(ffi::drm_ioctl_mode_get_resources(self.as_raw_fd()));
+        let res = try!(ffi::DrmModeCardRes::new(self.as_raw_fd()));
 
         unsafe {
             Ok(Resources {
@@ -49,80 +49,37 @@ impl Device {
             })
         }
     }
-}
 
-#[derive(Debug, Clone)]
-pub struct ConnectorId(u32);
-#[derive(Debug, Clone)]
-pub struct EncoderId(u32);
-#[derive(Debug, Clone)]
-pub struct CrtcId(u32);
-#[derive(Debug, Clone)]
-pub struct FramebufferId(u32);
-
-pub struct ConnectorIterator {
-    device: Device,
-    connectors: IntoIter<ConnectorId>
-}
-
-pub struct EncoderIterator {
-    device: Device,
-    encoders: IntoIter<EncoderId>
-}
-
-pub struct CrtcIterator {
-    device: Device,
-    crtcs: IntoIter<CrtcId>
-}
-
-pub struct FramebufferIterator {
-    device: Device,
-    framebuffers: IntoIter<FramebufferId>
-}
-
-impl Iterator for ConnectorIterator {
-    type Item = Result<Connector>;
-    fn next(&mut self) -> Option<Result<Connector>> {
-        // Get the raw id of the connector
-        let raw_id = match self.connectors.next() {
-            Some(id) => id.0,
-            None => return None
+    pub fn connector(&self, id: ConnectorId) -> Result<Connector> {
+        let raw = try!(ffi::DrmModeGetConnector::new(self.as_raw_fd(), id.0));
+        let con = Connector {
+            device: self.clone(),
+            id: id,
+            encoders: unsafe { transmute(raw.encoders) },
+            size: (raw.raw.mm_width, raw.raw.mm_height)
         };
 
-        // Get the raw results
-        let con_res = ffi::drm_ioctl_mode_get_connector(self.device.as_raw_fd(), raw_id);
-        let ffi_con = match con_res {
-            Err(e) => return Some(Err(e)),
-            Ok(c) => c
+        Ok(con)
+    }
+
+    pub fn encoder(&self, id: EncoderId) -> Result<Encoder> {
+        let raw = try!(ffi::DrmModeGetEncoder::new(self.as_raw_fd(), id.0));
+        let enc = Encoder {
+            device: self.clone(),
+            id: id
         };
 
-        unsafe {
-            Some(Ok(Connector {
-                encoders: transmute(ffi_con.encoders),
-                size: ffi_con.size
-            }))
-        }
+        Ok(enc)
     }
-}
 
-impl Iterator for EncoderIterator {
-    type Item = EncoderId;
-    fn next(&mut self) -> Option<EncoderId> {
-        self.encoders.next()
-    }
-}
+    pub fn crtc(&self, id: CrtcId) -> Result<Crtc> {
+        let raw = try!(ffi::DrmModeGetCrtc::new(self.as_raw_fd(), id.0));
+        let crtc = Crtc {
+            device: self.clone(),
+            id: id
+        };
 
-impl Iterator for CrtcIterator {
-    type Item = CrtcId;
-    fn next(&mut self) -> Option<CrtcId> {
-        self.crtcs.next()
-    }
-}
-
-impl Iterator for FramebufferIterator {
-    type Item = FramebufferId;
-    fn next(&mut self) -> Option<FramebufferId> {
-        self.framebuffers.next()
+        Ok(crtc)
     }
 }
 
@@ -167,7 +124,100 @@ impl Resources {
 
 #[derive(Debug)]
 pub struct Connector {
+    device: Device,
+    id: ConnectorId,
     encoders: Vec<EncoderId>,
-    size: (u32, u32)
+    size: (u32, u32),
 }
+
+#[derive(Debug)]
+pub struct Encoder {
+    device: Device,
+    id: EncoderId,
+}
+
+#[derive(Debug)]
+pub struct Crtc {
+    device: Device,
+    id: CrtcId
+}
+
+#[derive(Debug)]
+pub struct Framebuffer {
+    device: Device,
+    id: FramebufferId
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectorId(u32);
+#[derive(Debug, Clone)]
+pub struct EncoderId(u32);
+#[derive(Debug, Clone)]
+pub struct CrtcId(u32);
+#[derive(Debug, Clone)]
+pub struct FramebufferId(u32);
+
+pub struct ConnectorIterator {
+    device: Device,
+    connectors: IntoIter<ConnectorId>
+}
+
+pub struct EncoderIterator {
+    device: Device,
+    encoders: IntoIter<EncoderId>
+}
+
+pub struct CrtcIterator {
+    device: Device,
+    crtcs: IntoIter<CrtcId>
+}
+
+pub struct FramebufferIterator {
+    device: Device,
+    framebuffers: IntoIter<FramebufferId>
+}
+
+impl Iterator for ConnectorIterator {
+    type Item = Result<Connector>;
+    fn next(&mut self) -> Option<Result<Connector>> {
+        match self.connectors.next() {
+            Some(id) => Some(self.device.connector(id)),
+            None => None
+        }
+    }
+}
+
+impl Iterator for EncoderIterator {
+    type Item = Result<Encoder>;
+    fn next(&mut self) -> Option<Result<Encoder>> {
+        match self.encoders.next() {
+            Some(id) => Some(self.device.encoder(id)),
+            None => None
+        }
+    }
+}
+
+impl Iterator for CrtcIterator {
+    type Item = Result<Crtc>;
+    fn next(&mut self) -> Option<Result<Crtc>> {
+        match self.crtcs.next() {
+            Some(id) => Some(self.device.crtc(id)),
+            None => None
+        }
+    }
+}
+
+impl Iterator for FramebufferIterator {
+    type Item = Result<Framebuffer>;
+    fn next(&mut self) -> Option<Result<Framebuffer>> {
+        match self.framebuffers.next() {
+            Some(id) => Some(Ok(Framebuffer {
+                device: self.device.clone(),
+                id: id,
+            })),
+            None => None
+        }
+    }
+}
+
 
