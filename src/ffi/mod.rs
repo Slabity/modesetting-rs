@@ -7,7 +7,7 @@ use errno::errno;
 use std::os::unix::io::RawFd;
 use libc::ioctl;
 
-// Wrap the ioctl function to return errno on failure.
+// This macro simple wraps the ioctl call to return errno on failure
 macro_rules! ioctl {
     ( $fd:expr, $code:expr, $obj:expr ) => ( unsafe {
         if ioctl($fd, $code, $obj) != 0 {
@@ -16,101 +16,116 @@ macro_rules! ioctl {
     })
 }
 
-#[derive(Debug)]
-pub struct DrmModeCardRes {
-    pub connectors: Vec<u32>,
-    pub encoders: Vec<u32>,
-    pub crtcs: Vec<u32>,
-    pub framebuffers: Vec<u32>,
-    pub min_width: u32,
-    pub max_width: u32,
-    pub min_height: u32,
-    pub max_height: u32,
+// A large number of the ioctl calls used need to be called twice. This is
+// because the system does not allocate memory for buffers. Instead, it stores
+// the number of elements that a buffer needs to have and leaves it to the
+// program to allocate and deallocate the buffers. Then the ioctl call is made
+// again and the system fills the buffers up. Manual allocation in rust is a
+// pain though. Instead, we create a Vec<T> buffer to store the elements and
+// let the compiler deallocate it when the struct itself is deallocated.
+//
+// This macro takes care of it for us by creating a new type that stores both
+// the raw C struct and all the buffers used.
+macro_rules! buffered_ioctl_struct {
+    (
+        Create $new_ty:ident from $raw_ty:ty;
+        Ioctl $ioctl:ident;
+        $(
+            Set $raw_var:ident to $pass_var:ident with type $pass_ty:ty;
+        )*
+        $(
+            Buffer $new_val:ident from ($raw_count:ident, $raw_val:ident) with type $buf_ty:ty;
+        )* ) => (
+
+        // Create a new struct named $new_ty
+        pub struct $new_ty {
+            pub raw: $raw_ty,
+
+            // Create a new field for each buffer.
+            $(
+                pub $new_val: Vec<$buf_ty>,
+            )*
+        }
+
+        impl $new_ty {
+            pub fn new(fd: RawFd$(, $pass_var: $pass_ty)*) -> Result<$new_ty> {
+                // Create the C struct and set the default value
+                let mut raw: $raw_ty = Default::default();
+
+                // Set whatever variables in the struct we need
+                $(
+                raw.$raw_var = $pass_var;
+                )*
+
+                // First call fills in the buffer sizes
+                ioctl!(fd, $ioctl, &raw);
+
+                // Create each buffer with each size and type
+                $(
+                let mut $new_val: Vec<$buf_ty> = vec![Default::default(); raw.$raw_count as usize];
+                raw.$raw_val = $new_val.as_mut_slice().as_mut_ptr() as u64;
+                )*
+
+                // Second call fills up the buffers
+                ioctl!(fd, $ioctl, &raw);
+
+                let new = $new_ty {
+                    raw: raw,
+                    $(
+                        $new_val: $new_val,
+                    )*
+                };
+
+                Ok(new)
+            }
+        }
+    )
 }
 
-pub fn drm_ioctl_mode_get_resources(fd: RawFd) -> Result<DrmModeCardRes> {
-    // The first time we call the ioctl, the counts will be filled.
-    let mut raw_res = drm_mode_card_res::default();
-    ioctl!(fd, FFI_DRM_IOCTL_MODE_GETRESOURCES, &raw_res);
+buffered_ioctl_struct!(
+    Create DrmModeCardRes from drm_mode_card_res;
+    Ioctl FFI_DRM_IOCTL_MODE_GETRESOURCES;
+    Buffer connectors from (count_connectors, connector_id_ptr) with type u32;
+    Buffer encoders from (count_encoders, encoder_id_ptr) with type u32;
+    Buffer crtcs from (count_crtcs, crtc_id_ptr) with type u32;
+    Buffer framebuffers from (count_fbs, fb_id_ptr) with type u32;
+    );
 
-    // Let's use those counts to allocate some vectors of those sizes.
-    let mut conns = vec![0u32; raw_res.count_connectors as usize];
-    let mut encs = vec![0u32; raw_res.count_encoders as usize];
-    let mut crtcs = vec![0u32; raw_res.count_crtcs as usize];
-    let mut fbs = vec![0u32; raw_res.count_fbs as usize];
+buffered_ioctl_struct!(
+    Create DrmModeGetConnector from drm_mode_get_connector;
+    Ioctl FFI_DRM_IOCTL_MODE_GETCONNECTOR;
+    Set connector_id to id with type u32;
+    Buffer encoders from (count_encoders, encoders_ptr) with type u32;
+    Buffer modes from (count_modes, modes_ptr) with type drm_mode_modeinfo;
+    Buffer properties from (count_props, props_ptr) with type u32;
+    Buffer prop_values from (count_props, prop_values_ptr) with type u32;
+    );
 
-    // Let's use the above vectors as buffers for the resources
-    raw_res.connector_id_ptr = conns.as_mut_slice().as_mut_ptr() as u64;
-    raw_res.encoder_id_ptr = encs.as_mut_slice().as_mut_ptr() as u64;
-    raw_res.crtc_id_ptr = crtcs.as_mut_slice().as_mut_ptr() as u64;
-    raw_res.fb_id_ptr = fbs.as_mut_slice().as_mut_ptr() as u64;
+// Note that this one doesn't have any buffers. But by pure luck we can use
+// the macro for it just as well.
+buffered_ioctl_struct!(
+    Create DrmModeGetEncoder from drm_mode_get_encoder;
+    Ioctl FFI_DRM_IOCTL_MODE_GETENCODER;
+    Set encoder_id to id with type u32;
+    );
 
-    // The second time we call it, all buffers will be filled
-    ioctl!(fd, FFI_DRM_IOCTL_MODE_GETRESOURCES, &raw_res);
+buffered_ioctl_struct!(
+    Create DrmModeGetCrtc from drm_mode_crtc;
+    Ioctl FFI_DRM_IOCTL_MODE_GETCRTC;
+    Set crtc_id to id with type u32;
+    );
 
-    let res = DrmModeCardRes {
-        connectors: conns,
-        encoders: encs,
-        crtcs: crtcs,
-        framebuffers: fbs,
-        min_width: raw_res.min_width,
-        max_width: raw_res.max_width,
-        min_height: raw_res.min_height,
-        max_height: raw_res.max_height,
-    };
+buffered_ioctl_struct!(
+    Create DrmModeGetProperty from drm_mode_get_property;
+    Ioctl FFI_DRM_IOCTL_MODE_GETPROPERTY;
+    Set prop_id to id with type u32;
+    Buffer values from (count_values, values_ptr) with type u32;
+    Buffer enum_blobs from (count_enum_blobs, enum_blob_ptr) with type drm_mode_property_enum;
+    );
 
-    Ok(res)
-}
-
-#[derive(Debug)]
-pub struct DrmModeGetConnector {
-    pub encoders: Vec<u32>,
-    pub modes: Vec<u32>,
-    pub properties: Vec<u32>,
-    pub prop_values: Vec<u32>,
-    pub encoder: u32,
-    pub connector: u32,
-    pub conn_type: u32,
-    pub conn_type_id: u32,
-    pub connected: u32,
-    pub size: (u32, u32),
-    pub subpixel: u32
-}
-
-pub fn drm_ioctl_mode_get_connector(fd: RawFd, id: u32) -> Result<DrmModeGetConnector> {
-    // The first time we call the ioctl, the counts will be filled
-    let mut raw_con = drm_mode_get_connector::default();
-    raw_con.connector_id = id;
-    ioctl!(fd, FFI_DRM_IOCTL_MODE_GETCONNECTOR, &raw_con);
-
-    // Let's use those counts to allocate the vectors
-    let mut encs = vec![0u32; raw_con.count_encoders as usize];
-    let mut modes = vec![0u32; raw_con.count_modes as usize];
-    let mut props = vec![0u32; raw_con.count_props as usize];
-    let mut prop_vals = vec![0u32; raw_con.count_props as usize];
-
-    raw_con.encoders_ptr = encs.as_mut_slice().as_mut_ptr() as u64;
-    raw_con.modes_ptr = modes.as_mut_slice().as_mut_ptr() as u64;
-    raw_con.props_ptr = props.as_mut_slice().as_mut_ptr() as u64;
-    raw_con.prop_values_ptr = prop_vals.as_mut_slice().as_mut_ptr() as u64;
-
-    ioctl!(fd, FFI_DRM_IOCTL_MODE_GETCONNECTOR, &raw_con);
-
-    let conn = DrmModeGetConnector {
-        encoders: encs,
-        modes: modes,
-        properties: props,
-        prop_values: prop_vals,
-        encoder: raw_con.encoder_id,
-        connector: raw_con.connector_id,
-        conn_type: raw_con.connector_type,
-        conn_type_id: raw_con.connector_type_id,
-        connected: raw_con.connection,
-        size: (raw_con.mm_width, raw_con.mm_height),
-        subpixel: raw_con.subpixel
-    };
-
-    Ok(conn)
-}
-
-
+buffered_ioctl_struct!(
+    Create DrmModeGetBlob from drm_mode_get_blob;
+    Ioctl FFI_DRM_IOCTL_MODE_GETPROPBLOB;
+    Set blob_id to id with type u32;
+    Buffer values from (length, data) with type u8;
+    );
