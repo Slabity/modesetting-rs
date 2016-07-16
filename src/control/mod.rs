@@ -55,6 +55,7 @@ impl Device {
         let con = Connector {
             device: self.clone(),
             id: id,
+            con_type: ConnectorType::from(raw.raw.connector_type),
             encoders: unsafe { transmute(raw.encoders) },
             size: (raw.raw.mm_width, raw.raw.mm_height)
         };
@@ -126,6 +127,7 @@ impl Resources {
 pub struct Connector {
     device: Device,
     id: ConnectorId,
+    con_type: ConnectorType,
     encoders: Vec<EncoderId>,
     size: (u32, u32),
 }
@@ -146,6 +148,42 @@ pub struct Crtc {
 pub struct Framebuffer {
     device: Device,
     id: FramebufferId
+}
+
+impl Connector {
+    pub fn encoders(&self) -> EncoderIterator {
+        EncoderIterator {
+            device: self.device.clone(),
+            encoders: self.encoders.clone().into_iter()
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ConnectorType {
+    Unknown = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_Unknown as isize,
+    VGA = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_VGA as isize,
+    DVII = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_DVII as isize,
+    DVID = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_DVID as isize,
+    DVIA = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_DVIA as isize,
+    Composite = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_Composite as isize,
+    SVideo = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_SVIDEO as isize,
+    LVDS = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_LVDS as isize,
+    Component = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_Component as isize,
+    NinePinDIN = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_9PinDIN as isize,
+    DisplayPort = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_DisplayPort as isize,
+    HDMIA = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_HDMIA as isize,
+    HDMIB = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_HDMIB as isize,
+    TV = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_TV as isize,
+    EDP = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_eDP as isize,
+    Virtual = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_VIRTUAL as isize,
+    DSI = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_DSI as isize,
+}
+
+impl From<u32> for ConnectorType {
+    fn from(ty: u32) -> ConnectorType {
+        unsafe { transmute(ty as u8) }
+    }
 }
 
 #[derive(Debug, Clone)]
