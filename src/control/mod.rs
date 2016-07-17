@@ -56,6 +56,7 @@ impl Device {
             device: self.clone(),
             id: id,
             con_type: ConnectorType::from(raw.raw.connector_type),
+            con_type_id: raw.raw.connector_type_id,
             encoders: unsafe { transmute(raw.encoders) },
             size: (raw.raw.mm_width, raw.raw.mm_height)
         };
@@ -67,7 +68,8 @@ impl Device {
         let raw = try!(ffi::DrmModeGetEncoder::new(self.as_raw_fd(), id.0));
         let enc = Encoder {
             device: self.clone(),
-            id: id
+            id: id,
+            crtc: CrtcId(raw.raw.crtc_id)
         };
 
         Ok(enc)
@@ -128,6 +130,7 @@ pub struct Connector {
     device: Device,
     id: ConnectorId,
     con_type: ConnectorType,
+    con_type_id: u32,
     encoders: Vec<EncoderId>,
     size: (u32, u32),
 }
@@ -136,6 +139,7 @@ pub struct Connector {
 pub struct Encoder {
     device: Device,
     id: EncoderId,
+    crtc: CrtcId
 }
 
 #[derive(Debug)]
@@ -151,15 +155,39 @@ pub struct Framebuffer {
 }
 
 impl Connector {
+    pub fn id(&self) -> ConnectorId {
+        self.id
+    }
+
     pub fn encoders(&self) -> EncoderIterator {
         EncoderIterator {
             device: self.device.clone(),
             encoders: self.encoders.clone().into_iter()
         }
     }
+
+    pub fn connector_type(&self) -> ConnectorType {
+        self.con_type
+    }
 }
 
-#[derive(Debug, PartialEq)]
+impl Encoder {
+    pub fn id(&self) -> EncoderId {
+        self.id
+    }
+
+    pub fn crtc(&self) -> Result<Crtc> {
+        self.device.crtc(self.crtc)
+    }
+}
+
+impl Crtc {
+    pub fn id(&self) -> CrtcId {
+        self.id
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ConnectorType {
     Unknown = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_Unknown as isize,
     VGA = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_VGA as isize,
@@ -186,13 +214,13 @@ impl From<u32> for ConnectorType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct ConnectorId(u32);
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct EncoderId(u32);
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct CrtcId(u32);
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct FramebufferId(u32);
 
 pub struct ConnectorIterator {
