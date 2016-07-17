@@ -88,6 +88,16 @@ impl Device {
         Ok(crtc)
     }
 
+    pub fn framebuffer(&self, id: FramebufferId) -> Result<Framebuffer> {
+        let raw = try!(ffi::DrmModeGetFb::new(self.as_raw_fd(), id.0));
+        let fb = Framebuffer {
+            device: self.clone(),
+            id: id
+        };
+
+        Ok(fb)
+    }
+
     pub fn property(&self, id: PropertyId) -> Result<Property> {
         let raw = try!(ffi::DrmModeGetProperty::new(self.as_raw_fd(), id.0));
         let property = Property {
@@ -196,6 +206,10 @@ pub struct Blob {
 impl Connector {
     pub fn id(&self) -> ConnectorId {
         self.id
+    }
+
+    pub fn current_encoder(&self) -> Result<Encoder> {
+        self.device.encoder(self.encoder)
     }
 
     pub fn encoders(&self) -> EncoderIterator {
@@ -382,10 +396,7 @@ impl Iterator for FramebufferIterator {
     type Item = Result<Framebuffer>;
     fn next(&mut self) -> Option<Result<Framebuffer>> {
         match self.framebuffers.next() {
-            Some(id) => Some(Ok(Framebuffer {
-                device: self.device.clone(),
-                id: id,
-            })),
+            Some(id) => Some(self.device.framebuffer(id)),
             None => None
         }
     }

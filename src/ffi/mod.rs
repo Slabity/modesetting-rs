@@ -116,6 +116,12 @@ buffered_ioctl_struct!(
     );
 
 buffered_ioctl_struct!(
+    Create DrmModeGetFb from drm_mode_fb_cmd;
+    Ioctl FFI_DRM_IOCTL_MODE_GETFB;
+    Set fb_id to id with type u32;
+    );
+
+buffered_ioctl_struct!(
     Create DrmModeGetProperty from drm_mode_get_property;
     Ioctl FFI_DRM_IOCTL_MODE_GETPROPERTY;
     Set prop_id to id with type u32;
