@@ -57,6 +57,8 @@ impl Device {
             device: self.clone(),
             id: id,
             con_type: ConnectorType::from(raw.raw.connector_type),
+            connection: Connection::from(raw.raw.connection),
+            encoder: EncoderId(raw.raw.encoder_id),
             encoders: unsafe { transmute(raw.encoders) },
             modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
             size: (raw.raw.mm_width, raw.raw.mm_height)
@@ -152,6 +154,8 @@ pub struct Connector {
     device: Device,
     id: ConnectorId,
     con_type: ConnectorType,
+    connection: Connection,
+    encoder: EncoderId,
     encoders: Vec<EncoderId>,
     modes: Vec<Mode>,
     size: (u32, u32),
@@ -189,22 +193,6 @@ pub struct Blob {
     data: Vec<u8>
 }
 
-#[derive(Debug)]
-pub struct Mode {
-    name: String,
-    clock: u32,
-    display: (u16, u16),
-    hsync: (u16, u16),
-    vsync: (u16, u16),
-    hskew: u16,
-    vscan: u16,
-    htotal: u16,
-    vtotal: u16,
-    vrefresh: u32,
-    flags: u32,
-    mode_type: u32,
-}
-
 impl Connector {
     pub fn id(&self) -> ConnectorId {
         self.id
@@ -219,6 +207,10 @@ impl Connector {
 
     pub fn connector_type(&self) -> ConnectorType {
         self.con_type
+    }
+
+    pub fn connection(&self) -> Connection {
+        self.connection
     }
 }
 
@@ -265,8 +257,37 @@ pub enum ConnectorType {
     DSI = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_DSI as isize,
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Connection {
+    Connected = ffi::Connection::FFI_DRM_MODE_CONNECTED as isize,
+    Disconnected = ffi::Connection::FFI_DRM_MODE_DISCONNECTED as isize,
+    Unknown = ffi::Connection::FFI_DRM_MODE_UNKNOWN as isize
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Mode {
+    name: String,
+    clock: u32,
+    display: (u16, u16),
+    hsync: (u16, u16),
+    vsync: (u16, u16),
+    hskew: u16,
+    vscan: u16,
+    htotal: u16,
+    vtotal: u16,
+    vrefresh: u32,
+    flags: u32,
+    mode_type: u32,
+}
+
 impl From<u32> for ConnectorType {
     fn from(ty: u32) -> ConnectorType {
+        unsafe { transmute(ty as u8) }
+    }
+}
+
+impl From<u32> for Connection {
+    fn from(ty: u32) -> Connection {
         unsafe { transmute(ty as u8) }
     }
 }
