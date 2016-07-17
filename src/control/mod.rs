@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::mem::transmute;
 use std::iter::Iterator;
 use std::vec::IntoIter;
+use std::ffi::CStr;
 
 #[derive(Debug, Clone)]
 pub struct Device {
@@ -56,8 +57,8 @@ impl Device {
             device: self.clone(),
             id: id,
             con_type: ConnectorType::from(raw.raw.connector_type),
-            con_type_id: raw.raw.connector_type_id,
             encoders: unsafe { transmute(raw.encoders) },
+            modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
             size: (raw.raw.mm_width, raw.raw.mm_height)
         };
 
@@ -83,6 +84,27 @@ impl Device {
         };
 
         Ok(crtc)
+    }
+
+    pub fn property(&self, id: PropertyId) -> Result<Property> {
+        let raw = try!(ffi::DrmModeGetProperty::new(self.as_raw_fd(), id.0));
+        let property = Property {
+            device: self.clone(),
+            id: id
+        };
+
+        Ok(property)
+    }
+
+    pub fn blob(&self, id: BlobId) -> Result<Blob> {
+        let raw = try!(ffi::DrmModeGetBlob::new(self.as_raw_fd(), id.0));
+        let blob = Blob {
+            device: self.clone(),
+            id: id,
+            data: raw.data
+        };
+
+        Ok(blob)
     }
 }
 
@@ -130,8 +152,8 @@ pub struct Connector {
     device: Device,
     id: ConnectorId,
     con_type: ConnectorType,
-    con_type_id: u32,
     encoders: Vec<EncoderId>,
+    modes: Vec<Mode>,
     size: (u32, u32),
 }
 
@@ -152,6 +174,35 @@ pub struct Crtc {
 pub struct Framebuffer {
     device: Device,
     id: FramebufferId
+}
+
+#[derive(Debug)]
+pub struct Property {
+    device: Device,
+    id: PropertyId
+}
+
+#[derive(Debug)]
+pub struct Blob {
+    device: Device,
+    id: BlobId,
+    data: Vec<u8>
+}
+
+#[derive(Debug)]
+pub struct Mode {
+    name: String,
+    clock: u32,
+    display: (u16, u16),
+    hsync: (u16, u16),
+    vsync: (u16, u16),
+    hskew: u16,
+    vscan: u16,
+    htotal: u16,
+    vtotal: u16,
+    vrefresh: u32,
+    flags: u32,
+    mode_type: u32,
 }
 
 impl Connector {
@@ -187,6 +238,12 @@ impl Crtc {
     }
 }
 
+impl Property {
+    pub fn id(&self) -> PropertyId {
+        self.id
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ConnectorType {
     Unknown = ffi::ConnectorType::FFI_DRM_MODE_CONNECTOR_Unknown as isize,
@@ -214,6 +271,29 @@ impl From<u32> for ConnectorType {
     }
 }
 
+impl From<ffi::drm_mode_modeinfo> for Mode {
+    fn from(raw: ffi::drm_mode_modeinfo) -> Mode {
+        let name = unsafe {
+            CStr::from_ptr(raw.name.as_ptr()).to_str().unwrap()
+        };
+
+        Mode {
+            name: name.to_string(),
+            clock: raw.clock,
+            display: (raw.hdisplay, raw.vdisplay),
+            hsync: (raw.hsync_start, raw.hsync_end),
+            vsync: (raw.vsync_start, raw.vsync_end),
+            hskew: raw.hskew,
+            vscan: raw.vscan,
+            htotal: raw.htotal,
+            vtotal: raw.vtotal,
+            vrefresh: raw.vrefresh,
+            flags: raw.flags,
+            mode_type: raw.type_
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct ConnectorId(u32);
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -222,6 +302,10 @@ pub struct EncoderId(u32);
 pub struct CrtcId(u32);
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct FramebufferId(u32);
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct PropertyId(u32);
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct BlobId(u32);
 
 pub struct ConnectorIterator {
     device: Device,

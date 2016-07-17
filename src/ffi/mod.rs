@@ -127,5 +127,5 @@ buffered_ioctl_struct!(
     Create DrmModeGetBlob from drm_mode_get_blob;
     Ioctl FFI_DRM_IOCTL_MODE_GETPROPBLOB;
     Set blob_id to id with type u32;
-    Buffer values from (length, data) with type u8;
+    Buffer data from (length, data) with type u8;
     );
