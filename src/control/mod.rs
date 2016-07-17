@@ -1,5 +1,5 @@
 use super::ffi;
-use super::error::{Error, Result};
+use super::error::Result;
 
 use std::os::unix::io::{RawFd, AsRawFd, FromRawFd};
 use std::fs::{File, OpenOptions};
@@ -9,10 +9,73 @@ use std::mem::transmute;
 use std::iter::Iterator;
 use std::vec::IntoIter;
 use std::ffi::CStr;
+use std::ptr;
+use libc;
+
+#[derive(Debug, Clone)]
+struct Driver {
+    driver: *mut ffi::kms_driver
+}
+
+impl FromRawFd for Driver {
+    unsafe fn from_raw_fd(fd: RawFd) -> Driver {
+        let mut driver: *mut ffi::kms_driver = ptr::null_mut();
+        ffi::kms_create(fd, &mut driver);
+        Driver {
+            driver: driver
+        }
+    }
+}
+
+impl Drop for Driver {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::kms_destroy(&mut self.driver);
+        }
+    }
+}
+
+impl Driver {
+    fn buffer(&self, width: u32, height: u32, ty: u32) -> Result<KmsBufferObject> {
+        let bo_attrs = [
+            KmsBufferObjectAttributes::Width as libc::c_uint, width as libc::c_uint,
+            KmsBufferObjectAttributes::Height as libc::c_uint, height as libc::c_uint,
+            KmsBufferObjectAttributes::Type as libc::c_uint, ty as libc::c_uint,
+            KmsBufferObjectAttributes::Terminate as libc::c_uint
+        ];
+
+        let mut bo: *mut ffi::kms_bo = ptr::null_mut();
+        let mut handles: [libc::uint32_t; 4] = [0; 4];
+        let mut pitches: [libc::uint32_t; 4] = [0; 4];
+        let offsets: [libc::uint32_t; 4] = [0; 4];
+
+        unsafe {
+            ffi::kms_bo_create(
+                self.driver, &bo_attrs as *const libc::c_uint, &mut bo
+                );
+            ffi::kms_bo_get_prop(
+                bo, KmsBufferObjectAttributes::Handle as u32, &mut handles[0]
+                );
+            ffi::kms_bo_get_prop(
+                bo, KmsBufferObjectAttributes::Pitch as u32, &mut pitches[0]
+                );
+        }
+
+        let buffer = KmsBufferObject {
+            bo: bo,
+            handles: handles,
+            pitches: pitches,
+            offsets: offsets
+        };
+
+        Ok(buffer)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Device {
-    file: Arc<File>
+    file: Arc<File>,
+    driver: Arc<Driver>
 }
 
 impl AsRawFd for Device {
@@ -23,7 +86,8 @@ impl AsRawFd for Device {
 impl FromRawFd for Device {
     unsafe fn from_raw_fd(fd: RawFd) -> Device {
         Device {
-            file: Arc::new(File::from_raw_fd(fd))
+            file: Arc::new(File::from_raw_fd(fd)),
+            driver: Arc::new(Driver::from_raw_fd(fd))
         }
     }
 }
@@ -31,8 +95,10 @@ impl FromRawFd for Device {
 impl Device {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Device> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
+        let fd = file.as_raw_fd();
         let dev = Device {
-            file: Arc::new(file)
+            file: Arc::new(file),
+            driver: unsafe { Arc::new(Driver::from_raw_fd(fd)) }
         };
         Ok(dev)
     }
@@ -117,6 +183,30 @@ impl Device {
         };
 
         Ok(blob)
+    }
+
+    pub fn create_framebuffer(&self, width: u32, height: u32) -> Result<Framebuffer> {
+        let bo = try!(self.driver.buffer(width, height, ffi::FFI_DRM_FORMAT_ARGB8888 as u32));
+        let id = try!(ffi::DrmModeAddFb2(self.as_raw_fd(), width, height, ffi::FFI_DRM_FORMAT_ARGB8888,
+                                         bo.handles, bo.pitches, bo.offsets));
+
+        self.framebuffer(FramebufferId(id))
+    }
+}
+
+#[derive(Debug)]
+struct KmsBufferObject {
+    pub bo: *mut ffi::kms_bo,
+    pub handles: [u32; 4],
+    pub pitches: [u32; 4],
+    pub offsets: [u32; 4]
+}
+
+impl Drop for KmsBufferObject {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::kms_bo_destroy(&mut self.bo);
+        }
     }
 }
 
@@ -294,6 +384,16 @@ pub struct Mode {
     mode_type: u32,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum KmsBufferObjectAttributes {
+    Terminate = ffi::kms_attrib::KMS_TERMINATE_PROP_LIST as isize,
+    Type = ffi::kms_attrib::KMS_BO_TYPE as isize,
+    Width = ffi::kms_attrib::KMS_WIDTH as isize,
+    Height = ffi::kms_attrib::KMS_HEIGHT as isize,
+    Pitch = ffi::kms_attrib::KMS_PITCH as isize,
+    Handle = ffi::kms_attrib::KMS_HANDLE as isize
+}
+
 impl From<u32> for ConnectorType {
     fn from(ty: u32) -> ConnectorType {
         unsafe { transmute(ty as u8) }
@@ -326,6 +426,13 @@ impl From<ffi::drm_mode_modeinfo> for Mode {
             flags: raw.flags,
             mode_type: raw.type_
         }
+    }
+}
+
+impl Into<libc::c_uint> for KmsBufferObjectAttributes {
+    fn into(self) ->  libc::c_uint {
+        let converter: u8 = unsafe { transmute(self) };
+        converter as libc::c_uint
     }
 }
 
