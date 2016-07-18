@@ -11,7 +11,7 @@ fn compile_drm_shim() {
 
 // Generate rust bindings to access drm structs
 fn generate_shim_bindings() {
-    let mut builder = bindgen::Builder::new("src/ffi/cc/drm_shim.c");
+    let builder = bindgen::Builder::new("src/ffi/cc/drm_shim.c");
     match builder.generate() {
         Ok(b) => b.write_to_file("src/ffi/drm_shim.rs").unwrap(),
         Err(e) => panic!(e)
