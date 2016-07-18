@@ -9,8 +9,6 @@ use std::mem::transmute;
 use std::iter::Iterator;
 use std::vec::IntoIter;
 use std::ffi::CStr;
-use std::ptr;
-use libc;
 
 #[derive(Debug, Clone)]
 pub struct Device {
@@ -33,7 +31,6 @@ impl FromRawFd for Device {
 impl Device {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Device> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
-        let fd = file.as_raw_fd();
         let dev = Device {
             file: Arc::new(file),
         };
@@ -64,6 +61,7 @@ impl Device {
             encoder: EncoderId(raw.raw.encoder_id),
             encoders: unsafe { transmute(raw.encoders) },
             modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
+            properties: unsafe { transmute(raw.properties) },
             size: (raw.raw.mm_width, raw.raw.mm_height)
         };
 
@@ -85,7 +83,16 @@ impl Device {
         let raw = try!(ffi::DrmModeGetCrtc::new(self.as_raw_fd(), id.0));
         let crtc = Crtc {
             device: self.clone(),
-            id: id
+            id: id,
+            framebuffer: match raw.raw.fb_id {
+                0 => None,
+                _ => Some(FramebufferId(raw.raw.fb_id))
+            },
+            position: (raw.raw.x, raw.raw.y),
+            mode: match raw.raw.mode.clock {
+                0 => None,
+                _ => Some(Mode::from(raw.raw.mode))
+            }
         };
 
         Ok(crtc)
@@ -95,7 +102,8 @@ impl Device {
         let raw = try!(ffi::DrmModeGetFb::new(self.as_raw_fd(), id.0));
         let fb = Framebuffer {
             device: self.clone(),
-            id: id
+            id: id,
+            size: (raw.raw.width, raw.raw.height)
         };
 
         Ok(fb)
@@ -103,9 +111,13 @@ impl Device {
 
     pub fn property(&self, id: PropertyId) -> Result<Property> {
         let raw = try!(ffi::DrmModeGetProperty::new(self.as_raw_fd(), id.0));
+        let name = unsafe {
+            CStr::from_ptr(raw.raw.name.as_ptr()).to_str().unwrap()
+        };
         let property = Property {
             device: self.clone(),
-            id: id
+            id: id,
+            name: name.to_string()
         };
 
         Ok(property)
@@ -171,7 +183,8 @@ pub struct Connector {
     encoder: EncoderId,
     encoders: Vec<EncoderId>,
     modes: Vec<Mode>,
-    size: (u32, u32),
+    properties: Vec<PropertyId>,
+    size: (u32, u32)
 }
 
 #[derive(Debug)]
@@ -184,19 +197,24 @@ pub struct Encoder {
 #[derive(Debug)]
 pub struct Crtc {
     device: Device,
-    id: CrtcId
+    id: CrtcId,
+    framebuffer: Option<FramebufferId>,
+    position: (u32, u32),
+    mode: Option<Mode>
 }
 
 #[derive(Debug)]
 pub struct Framebuffer {
     device: Device,
-    id: FramebufferId
+    id: FramebufferId,
+    size: (u32, u32)
 }
 
 #[derive(Debug)]
 pub struct Property {
     device: Device,
-    id: PropertyId
+    id: PropertyId,
+    name: String,
 }
 
 #[derive(Debug)]
@@ -211,6 +229,14 @@ impl Connector {
         self.id
     }
 
+    pub fn connector_type(&self) -> ConnectorType {
+        self.con_type
+    }
+
+    pub fn connection(&self) -> Connection {
+        self.connection
+    }
+
     pub fn current_encoder(&self) -> Result<Encoder> {
         self.device.encoder(self.encoder)
     }
@@ -222,12 +248,11 @@ impl Connector {
         }
     }
 
-    pub fn connector_type(&self) -> ConnectorType {
-        self.con_type
-    }
-
-    pub fn connection(&self) -> Connection {
-        self.connection
+    pub fn properties(&self) -> PropertyIterator {
+        PropertyIterator {
+            device: self.device.clone(),
+            properties: self.properties.clone().into_iter()
+        }
     }
 }
 
@@ -244,6 +269,10 @@ impl Encoder {
 impl Crtc {
     pub fn id(&self) -> CrtcId {
         self.id
+    }
+
+    pub fn mode(&self) -> Option<Mode> {
+        self.mode.clone()
     }
 }
 
@@ -365,6 +394,11 @@ pub struct FramebufferIterator {
     framebuffers: IntoIter<FramebufferId>
 }
 
+pub struct PropertyIterator {
+    device: Device,
+    properties: IntoIter<PropertyId>
+}
+
 impl Iterator for ConnectorIterator {
     type Item = Result<Connector>;
     fn next(&mut self) -> Option<Result<Connector>> {
@@ -405,4 +439,13 @@ impl Iterator for FramebufferIterator {
     }
 }
 
+impl Iterator for PropertyIterator {
+    type Item = Result<Property>;
+    fn next(&mut self) -> Option<Result<Property>> {
+        match self.properties.next() {
+            Some(id) => Some(self.device.property(id)),
+            None => None
+        }
+    }
+}
 
