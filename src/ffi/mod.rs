@@ -136,19 +136,3 @@ buffered_ioctl_struct!(
     Buffer data from (length, data) with type u8;
     );
 
-pub fn DrmModeAddFb2(fd: RawFd, width: u32, height: u32, pixels: u32, handles: [u32; 4], pitches: [u32; 4], offsets: [u32; 4]) -> Result<u32> {
-    let mut fb_cmd = drm_mode_fb_cmd2::default();
-
-    fb_cmd.width = width;
-    fb_cmd.height = height;
-    fb_cmd.pixel_format = pixels;
-
-    fb_cmd.handles = handles;
-    fb_cmd.pitches = pitches;
-    fb_cmd.offsets = offsets;
-
-    ioctl!(fd, FFI_DRM_IOCTL_MODE_ADDFB2, &fb_cmd);
-
-    Ok(fb_cmd.fb_id)
-}
-
