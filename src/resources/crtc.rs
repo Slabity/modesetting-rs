@@ -2,7 +2,8 @@ use super::super::Device;
 use super::super::error::Result;
 use super::super::mode::Mode;
 use super::super::ffi;
-use super::ResourceId;
+use super::{ResourceId, FramebufferId};
+use super::Framebuffer;
 
 use std::vec::IntoIter;
 
@@ -12,7 +13,7 @@ pub type CrtcId = ResourceId;
 pub struct Crtc {
     device: Device,
     id: CrtcId,
-    //framebuffer: Option<FramebufferId>,
+    framebuffer: Option<u32>,
     position: (u32, u32),
     mode: Option<Mode>
 }
@@ -25,6 +26,13 @@ impl Crtc {
     pub fn mode(&self) -> Option<Mode> {
         self.mode.clone()
     }
+
+    pub fn framebuffer(&self) -> Option<Result<Framebuffer>> {
+        match self.framebuffer {
+            Some(id) => Some(self.device.framebuffer(id)),
+            None => None
+        }
+    }
 }
 
 impl<'a> From<(&'a Device, &'a ffi::DrmModeGetCrtc)> for Crtc {
@@ -33,10 +41,10 @@ impl<'a> From<(&'a Device, &'a ffi::DrmModeGetCrtc)> for Crtc {
         Crtc {
             device: (*dev).clone(),
             id: raw.raw.crtc_id,
-            /*framebuffer: match raw.raw.fb_id {
+            framebuffer: match raw.raw.fb_id {
                 0 => None,
                 _ => Some(raw.raw.fb_id)
-            },*/
+            },
             position: (raw.raw.x, raw.raw.y),
             mode: match raw.raw.mode.clock {
                 0 => None,

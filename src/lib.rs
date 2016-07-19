@@ -91,6 +91,11 @@ impl Device {
         let raw = try!(ffi::DrmModeGetCrtc::new(self.as_raw_fd(), id));
         Ok(Crtc::from((self, &raw)))
     }
+
+    fn framebuffer(&self, id: FramebufferId) -> Result<Framebuffer> {
+        let raw = try!(ffi::DrmModeGetFb::new(self.as_raw_fd(), id));
+        Ok(Framebuffer::from((self, &raw)))
+    }
 }
 
 
