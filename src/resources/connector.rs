@@ -19,7 +19,6 @@ pub struct Connector {
     curr_encoder: EncoderId,
     encoders: Vec<EncoderId>,
     modes: Vec<Mode>,
-    //properties: Vec<PropertyId>,
     size: (u32, u32)
 }
 
@@ -52,7 +51,6 @@ impl<'a> From<(&'a Device, &'a ffi::DrmModeGetConnector)> for Connector {
             curr_encoder: raw.raw.encoder_id,
             encoders: raw.encoders.clone(),
             modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
-            //properties: unsafe { transmute(raw.properties) },
             size: (raw.raw.mm_width, raw.raw.mm_height)
         }
     }
