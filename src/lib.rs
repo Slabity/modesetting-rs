@@ -1,4 +1,34 @@
+/*!
+  High-level access to modesetting functionality.
+
+  # Overview
+
+  Modesetting is how you control the display functionality on your computer.
+  In systems that provide Kernel Modesetting (KMS), this functionality can be
+  accessed by opening a character block device and controlling it through
+  various ioctls provided by your graphics driver.
+
+  Modesetting consists of opening a Device and using four types of resources:
+
+  - Connectors: The physical interfaces on your GPU, such as HDMI, VGA, and
+  LVDS ports.
+  - Encoders: These modify and deliver the pixel data to the connectors.
+  - CRTCs: Points to a scanout buffer in video memory and reads it based on the
+  mode it is set to.
+  - Framebuffer: Pixel data that can be used by a CRTC
+
+  The standard procedure to do this is to first open the device. Then choose
+  the connectors you wish to use. For each connector, get your desired mode and
+  choose an available CRTC to use (in most situations, attaching a CRTC to a
+  connector will automatically choose the preferred encoder). Once you have a
+  suitable Connector, CRTC, and Mode, you can create a framebuffer for scanout.
+
+  For more information, see the `drm-kms` man page.
+  */
+
+#[doc(hidden)]
 extern crate libc;
+#[doc(hidden)]
 extern crate errno;
 
 mod ffi;
@@ -7,7 +37,7 @@ pub mod resources;
 pub mod mode;
 
 use error::Result;
-pub use self::resources::*;
+use self::resources::*;
 
 use std::os::unix::io::{RawFd, AsRawFd, FromRawFd};
 use std::fs::{File, OpenOptions};
