@@ -26,18 +26,16 @@
   For more information, see the `drm-kms` man page.
   */
 
-#[doc(hidden)]
 extern crate libc;
-#[doc(hidden)]
 extern crate errno;
 
 mod ffi;
 pub mod error;
-pub mod resources;
+pub mod resource;
 pub mod mode;
 
 use error::Result;
-use self::resources::*;
+use self::resource::*;
 
 use std::os::unix::io::{RawFd, AsRawFd, FromRawFd};
 use std::fs::{File, OpenOptions};
