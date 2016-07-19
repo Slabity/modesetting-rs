@@ -56,7 +56,7 @@ typedef enum {
     FFI_DRM_MODE_CONNECTOR_eDP =         DRM_MODE_CONNECTOR_eDP,
     FFI_DRM_MODE_CONNECTOR_VIRTUAL =     DRM_MODE_CONNECTOR_VIRTUAL,
     FFI_DRM_MODE_CONNECTOR_DSI =         DRM_MODE_CONNECTOR_DSI
-} ConnectorType;
+} ConnectorInterface;
 
 typedef enum {
     FFI_DRM_MODE_CONNECTED      = 1,
