@@ -121,18 +121,3 @@ buffered_ioctl_struct!(
     Set fb_id to id with type u32;
     );
 
-buffered_ioctl_struct!(
-    Create DrmModeGetProperty from drm_mode_get_property;
-    Ioctl FFI_DRM_IOCTL_MODE_GETPROPERTY;
-    Set prop_id to id with type u32;
-    Buffer values from (count_values, values_ptr) with type u32;
-    Buffer enum_blobs from (count_enum_blobs, enum_blob_ptr) with type drm_mode_property_enum;
-    );
-
-buffered_ioctl_struct!(
-    Create DrmModeGetBlob from drm_mode_get_blob;
-    Ioctl FFI_DRM_IOCTL_MODE_GETPROPBLOB;
-    Set blob_id to id with type u32;
-    Buffer data from (length, data) with type u8;
-    );
-
