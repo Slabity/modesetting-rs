@@ -70,9 +70,9 @@ impl Device {
         Ok(dev)
     }
 
-    pub fn resources(&self) -> Result<Resources> {
+    pub fn resources(&self) -> Result<Manager> {
         let raw = try!(ffi::DrmModeCardRes::new(self.as_raw_fd()));
-        Ok(Resources::from((self, &raw)))
+        Ok(Manager::from((self, &raw)))
     }
 
     fn connector(&self, id: ConnectorId) -> Result<Connector> {

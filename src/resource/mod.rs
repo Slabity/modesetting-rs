@@ -14,7 +14,7 @@ use super::ffi;
 pub type ResourceId = u32;
 
 #[derive(Debug)]
-pub struct Resources {
+pub struct Manager {
     device: Device,
     connectors: Vec<ConnectorId>,
     encoders: Vec<EncoderId>,
@@ -22,7 +22,7 @@ pub struct Resources {
     framebuffers: Vec<FramebufferId>
 }
 
-impl Resources {
+impl Manager {
     pub fn connectors(&self) -> Connectors {
         Connectors::from((&self.device, &self.connectors))
     }
@@ -40,10 +40,10 @@ impl Resources {
     }
 }
 
-impl<'a> From<(&'a Device, &'a ffi::DrmModeCardRes)> for Resources {
-    fn from(dev_raw: (&Device, &ffi::DrmModeCardRes)) -> Resources {
+impl<'a> From<(&'a Device, &'a ffi::DrmModeCardRes)> for Manager {
+    fn from(dev_raw: (&Device, &ffi::DrmModeCardRes)) -> Manager {
         let (dev, raw) = dev_raw;
-        Resources {
+        Manager {
             device: (*dev).clone(),
             connectors: (*raw).connectors.clone(),
             encoders: (*raw).encoders.clone(),
