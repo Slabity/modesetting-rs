@@ -1,6 +1,6 @@
 [package]
 name = "modesetting"
-description = "Safe interface for DRM modesetting and display buffers"
+description = "High-level access to modesetting functionality."
 version = "0.0.2"
 authors = ["Tyler Slabinski <tslabinski@slabity.net>"]
 license = "LGPL-3.0"
