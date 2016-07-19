@@ -4,7 +4,7 @@ description = "Safe interface for DRM modesetting and display buffers"
 version = "0.0.1"
 authors = ["Tyler Slabinski <tslabinski@slabity.net>"]
 license = "LGPL-3.0"
-repository = "https://gitlab.com/slabity/drm-rs"
+repository = "https://github.com/Slabity/modesetting-rs"
 build = "build.rs"
 
 [build-dependencies]
