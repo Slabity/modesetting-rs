@@ -9,6 +9,7 @@ pub use self::crtc::*;
 pub use self::framebuffer::*;
 
 use super::Device;
+use super::error::Result;
 use super::ffi;
 
 pub type ResourceId = u32;
@@ -43,6 +44,22 @@ impl<'a> Manager<'a> {
 
     pub fn framebuffers(&self) -> Framebuffers {
         Framebuffers::from((self.device, &self.framebuffers))
+    }
+
+    fn connector(&self, id: ConnectorId) -> Result<Connector> {
+        self.device.connector(id)
+    }
+
+    fn encoder(&self, id: EncoderId) -> Result<Encoder> {
+        self.device.encoder(id)
+    }
+
+    fn crtc(&self, id: CrtcId) -> Result<Crtc> {
+        self.device.crtc(id)
+    }
+
+    fn framebuffer(&self, id: FramebufferId) -> Result<Framebuffer> {
+        self.device.framebuffer(id)
     }
 }
 
