@@ -70,7 +70,7 @@ impl Device {
         Ok(dev)
     }
 
-    pub fn resources(&self) -> Result<Manager> {
+    pub fn manager(&self) -> Result<Manager> {
         let raw = try!(ffi::DrmModeCardRes::new(self.as_raw_fd()));
         Ok(Manager::from((self, &raw)))
     }
