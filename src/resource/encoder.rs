@@ -1,4 +1,5 @@
 use super::super::Device;
+use super::Manager;
 use super::super::error::Result;
 use super::super::ffi;
 use super::{ResourceId, CrtcId};
@@ -33,27 +34,27 @@ impl<'a> From<(&'a Device, &'a ffi::DrmModeGetEncoder)> for Encoder {
 }
 
 #[derive(Clone)]
-pub struct Encoders {
-    device: Device,
+pub struct Encoders<'a> {
+    manager: &'a Manager<'a>,
     encoders: IntoIter<EncoderId>
 }
 
-impl Iterator for Encoders {
+impl<'a> Iterator for Encoders<'a> {
     type Item = Result<Encoder>;
     fn next(&mut self) -> Option<Result<Encoder>> {
         match self.encoders.next() {
-            Some(id) => Some(self.device.encoder(id)),
+            Some(id) => Some(self.manager.encoder(id)),
             None => None
         }
     }
 }
 
-impl<'a> From<(&'a Device, &'a Vec<EncoderId>)> for Encoders {
-    fn from(dev_vec: (&Device, &Vec<EncoderId>)) -> Encoders {
-        let (dev, vec) = dev_vec;
+impl<'a> From<(&'a Manager<'a>, Vec<EncoderId>)> for Encoders<'a> {
+    fn from(man_vec: (&'a Manager<'a>, Vec<EncoderId>)) -> Encoders<'a> {
+        let (man, vec) = man_vec;
         Encoders {
-            device: dev.clone(),
-            encoders: vec.clone().into_iter()
+            manager: man,
+            encoders: vec.into_iter()
         }
     }
 }

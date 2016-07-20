@@ -1,9 +1,9 @@
 use super::super::Device;
+use super::Manager;
 use super::super::mode::Mode;
 use super::super::error::Result;
 use super::super::ffi;
 use super::{ResourceId, EncoderId};
-use super::{Encoder, Encoders};
 
 use std::mem::transmute;
 use std::vec::IntoIter;
@@ -30,17 +30,9 @@ impl Connector {
     pub fn state(&self) -> ConnectorState {
         self.state
     }
-
-    pub fn current_encoder(&self) -> Result<Encoder> {
-        self.device.encoder(self.curr_encoder)
-    }
-
-    pub fn possible_encoders(&self) -> Encoders {
-        Encoders::from((&self.device, &self.encoders))
-    }
 }
 
-impl<'a> From<(&'a Device, &'a ffi::DrmModeGetConnector)> for Connector {
+impl<'a, 'b> From<(&'a Device, &'b ffi::DrmModeGetConnector)> for Connector {
     fn from(dev_raw: (&Device, &ffi::DrmModeGetConnector)) -> Connector {
         let (dev, raw) = dev_raw;
         Connector {
@@ -57,27 +49,27 @@ impl<'a> From<(&'a Device, &'a ffi::DrmModeGetConnector)> for Connector {
 }
 
 #[derive(Clone)]
-pub struct Connectors {
-    device: Device,
+pub struct Connectors<'a> {
+    manager: &'a Manager<'a>,
     connectors: IntoIter<ConnectorId>
 }
 
-impl Iterator for Connectors {
+impl<'a> Iterator for Connectors<'a> {
     type Item = Result<Connector>;
     fn next(&mut self) -> Option<Result<Connector>> {
         match self.connectors.next() {
-            Some(id) => Some(self.device.connector(id)),
+            Some(id) => Some(self.manager.connector(id)),
             None => None
         }
     }
 }
 
-impl<'a> From<(&'a Device, &'a Vec<ConnectorId>)> for Connectors {
-    fn from(dev_vec: (&Device, &Vec<ConnectorId>)) -> Connectors {
-        let (dev, vec) = dev_vec;
+impl<'a> From<(&'a Manager<'a>, Vec<ConnectorId>)> for Connectors<'a> {
+    fn from(man_vec: (&'a Manager<'a>, Vec<ConnectorId>)) -> Connectors<'a> {
+        let (man, vec) = man_vec;
         Connectors {
-            device: dev.clone(),
-            connectors: vec.clone().into_iter()
+            manager: man,
+            connectors: vec.into_iter()
         }
     }
 }

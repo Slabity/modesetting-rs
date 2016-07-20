@@ -1,8 +1,9 @@
 use super::super::Device;
+use super::Manager;
 use super::super::error::Result;
 use super::super::mode::Mode;
 use super::super::ffi;
-use super::{ResourceId, FramebufferId};
+use super::ResourceId;
 use super::Framebuffer;
 
 use std::vec::IntoIter;
@@ -26,7 +27,6 @@ impl Crtc {
     pub fn mode(&self) -> Option<Mode> {
         self.mode.clone()
     }
-
     pub fn framebuffer(&self) -> Option<Result<Framebuffer>> {
         match self.framebuffer {
             Some(id) => Some(self.device.framebuffer(id)),
@@ -55,27 +55,27 @@ impl<'a> From<(&'a Device, &'a ffi::DrmModeGetCrtc)> for Crtc {
 }
 
 #[derive(Clone)]
-pub struct Crtcs {
-    device: Device,
+pub struct Crtcs<'a> {
+    manager: &'a Manager<'a>,
     crtcs: IntoIter<CrtcId>
 }
 
-impl<'a> From<(&'a Device, &'a Vec<CrtcId>)> for Crtcs {
-    fn from(dev_vec: (&Device, &Vec<CrtcId>)) -> Crtcs {
-        let (dev, vec) = dev_vec;
-        Crtcs {
-            device: dev.clone(),
-            crtcs: vec.clone().into_iter()
+impl<'a> Iterator for Crtcs<'a> {
+    type Item = Result<Crtc>;
+    fn next(&mut self) -> Option<Result<Crtc>> {
+        match self.crtcs.next() {
+            Some(id) => Some(self.manager.crtc(id)),
+            None => None
         }
     }
 }
 
-impl Iterator for Crtcs {
-    type Item = Result<Crtc>;
-    fn next(&mut self) -> Option<Result<Crtc>> {
-        match self.crtcs.next() {
-            Some(id) => Some(self.device.crtc(id)),
-            None => None
+impl<'a> From<(&'a Manager<'a>, Vec<CrtcId>)> for Crtcs<'a> {
+    fn from(man_vec: (&'a Manager<'a>, Vec<CrtcId>)) -> Crtcs<'a> {
+        let (man, vec) = man_vec;
+        Crtcs {
+            manager: man,
+            crtcs: vec.into_iter()
         }
     }
 }

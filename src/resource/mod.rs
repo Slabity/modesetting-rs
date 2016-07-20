@@ -15,12 +15,6 @@ use super::ffi;
 pub type ResourceId = u32;
 
 #[derive(Debug)]
-enum ResourceWrapper<T> {
-    Unloaded(ResourceId),
-    Loaded(T)
-}
-
-#[derive(Debug)]
 pub struct Manager<'a> {
     device: &'a Device,
     connectors: Vec<ConnectorId>,
@@ -31,19 +25,19 @@ pub struct Manager<'a> {
 
 impl<'a> Manager<'a> {
     pub fn connectors(&self) -> Connectors {
-        Connectors::from((self.device, &self.connectors))
+        Connectors::from((self, self.connectors.clone()))
     }
 
     pub fn encoders(&self) -> Encoders {
-        Encoders::from((self.device, &self.encoders))
+        Encoders::from((self, self.encoders.clone()))
     }
 
     pub fn crtcs(&self) -> Crtcs {
-        Crtcs::from((self.device, &self.crtcs))
+        Crtcs::from((self, self.crtcs.clone()))
     }
 
     pub fn framebuffers(&self) -> Framebuffers {
-        Framebuffers::from((self.device, &self.framebuffers))
+        Framebuffers::from((self, self.framebuffers.clone()))
     }
 
     fn connector(&self, id: ConnectorId) -> Result<Connector> {
