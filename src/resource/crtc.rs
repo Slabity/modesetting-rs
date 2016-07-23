@@ -1,25 +1,34 @@
-use super::super::Device;
 use super::Manager;
 use super::super::error::Result;
 use super::super::mode::Mode;
 use super::super::ffi;
 use super::ResourceId;
-use super::Framebuffer;
 
 use std::vec::IntoIter;
 
 pub type CrtcId = ResourceId;
 
 #[derive(Debug)]
-pub struct Crtc {
-    device: Device,
+pub struct Crtc<'a> {
+    manager: &'a Manager<'a>,
     id: CrtcId,
-    framebuffer: Option<u32>,
     position: (u32, u32),
     mode: Option<Mode>
 }
 
-impl Crtc {
+impl<'a> Crtc<'a> {
+    fn from_raw(man: &'a Manager, raw: ffi::DrmModeGetCrtc) -> Crtc<'a> {
+        Crtc {
+            manager: man,
+            id: raw.raw.crtc_id,
+            position: (raw.raw.x, raw.raw.y),
+            mode: match raw.raw.mode.clock {
+                0 => None,
+                _ => Some(Mode::from(raw.raw.mode))
+            }
+        }
+    }
+
     pub fn position(&self) -> (u32, u32) {
         self.position
     }
@@ -27,30 +36,11 @@ impl Crtc {
     pub fn mode(&self) -> Option<Mode> {
         self.mode.clone()
     }
-    pub fn framebuffer(&self) -> Option<Result<Framebuffer>> {
-        match self.framebuffer {
-            Some(id) => Some(self.device.framebuffer(id)),
-            None => None
-        }
-    }
 }
 
-impl<'a> From<(&'a Device, &'a ffi::DrmModeGetCrtc)> for Crtc {
-    fn from(dev_raw: (&Device, &ffi::DrmModeGetCrtc)) -> Crtc {
-        let (dev, raw) = dev_raw;
-        Crtc {
-            device: (*dev).clone(),
-            id: raw.raw.crtc_id,
-            framebuffer: match raw.raw.fb_id {
-                0 => None,
-                _ => Some(raw.raw.fb_id)
-            },
-            position: (raw.raw.x, raw.raw.y),
-            mode: match raw.raw.mode.clock {
-                0 => None,
-                _ => Some(Mode::from(raw.raw.mode))
-            }
-        }
+impl<'a> Drop for Crtc<'a> {
+    fn drop(&mut self) {
+        self.manager.unload_crtc(self.id);
     }
 }
 
@@ -61,21 +51,25 @@ pub struct Crtcs<'a> {
 }
 
 impl<'a> Iterator for Crtcs<'a> {
-    type Item = Result<Crtc>;
-    fn next(&mut self) -> Option<Result<Crtc>> {
-        match self.crtcs.next() {
-            Some(id) => Some(self.manager.crtc(id)),
-            None => None
+    type Item = Result<Crtc<'a>>;
+    fn next(&mut self) -> Option<Result<Crtc<'a>>> {
+        let raw = match self.crtcs.next() {
+            Some(id) => self.manager.load_crtc(id),
+            None => return None
+        };
+
+        match raw {
+            Ok(r) => Some(Ok(Crtc::from_raw(self.manager, r))),
+            Err(e) => Some(Err(e))
         }
     }
 }
 
-impl<'a> From<(&'a Manager<'a>, Vec<CrtcId>)> for Crtcs<'a> {
-    fn from(man_vec: (&'a Manager<'a>, Vec<CrtcId>)) -> Crtcs<'a> {
-        let (man, vec) = man_vec;
+impl<'a> Crtcs<'a> {
+    pub fn new(man: &'a Manager<'a>, iter: IntoIter<CrtcId>) -> Crtcs<'a> {
         Crtcs {
             manager: man,
-            crtcs: vec.into_iter()
+            crtcs: iter
         }
     }
 }

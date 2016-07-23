@@ -4,7 +4,6 @@ use std::fmt;
 use std::error::Error as StdError;
 use std::result::Result as StdResult;
 use std::io::Error as IoError;
-use std::io::Write;
 use std::convert::From;
 
 #[derive(Debug)]

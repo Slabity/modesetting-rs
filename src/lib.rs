@@ -37,62 +37,46 @@ pub mod mode;
 use error::Result;
 use self::resource::*;
 
-use std::os::unix::io::{RawFd, AsRawFd, FromRawFd};
+use std::os::unix::io::AsRawFd;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Device {
-    file: Arc<File>,
-}
-
-impl AsRawFd for Device {
-    fn as_raw_fd(&self) -> RawFd {
-        self.file.as_raw_fd()
-    }
-}
-
-impl FromRawFd for Device {
-    unsafe fn from_raw_fd(fd: RawFd) -> Device {
-        Device {
-            file: Arc::new(File::from_raw_fd(fd)),
-        }
-    }
+    file: File
 }
 
 impl Device {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Device> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
         let dev = Device {
-            file: Arc::new(file),
+            file: file,
         };
         Ok(dev)
     }
 
     pub fn manager(&self) -> Result<Manager> {
-        let raw = try!(ffi::DrmModeCardRes::new(self.as_raw_fd()));
-        Ok(Manager::from((self, &raw)))
+        Manager::from_device(self)
     }
 
-    fn connector(&self, id: ConnectorId) -> Result<Connector> {
-        let raw = try!(ffi::DrmModeGetConnector::new(self.as_raw_fd(), id));
-        Ok(Connector::from((self, &raw)))
+    fn resources(&self) -> Result<ffi::DrmModeCardRes> {
+        ffi::DrmModeCardRes::new(self.file.as_raw_fd())
     }
 
-    fn encoder(&self, id: EncoderId) -> Result<Encoder> {
-        let raw = try!(ffi::DrmModeGetEncoder::new(self.as_raw_fd(), id));
-        Ok(Encoder::from((self, &raw)))
+    fn connector(&self, id: ConnectorId) -> Result<ffi::DrmModeGetConnector> {
+        ffi::DrmModeGetConnector::new(self.file.as_raw_fd(), id)
     }
 
-    fn crtc(&self, id: CrtcId) -> Result<Crtc> {
-        let raw = try!(ffi::DrmModeGetCrtc::new(self.as_raw_fd(), id));
-        Ok(Crtc::from((self, &raw)))
+    fn encoder(&self, id: EncoderId) -> Result<ffi::DrmModeGetEncoder> {
+        ffi::DrmModeGetEncoder::new(self.file.as_raw_fd(), id)
     }
 
-    fn framebuffer(&self, id: FramebufferId) -> Result<Framebuffer> {
-        let raw = try!(ffi::DrmModeGetFb::new(self.as_raw_fd(), id));
-        Ok(Framebuffer::from((self, &raw)))
+    fn crtc(&self, id: CrtcId) -> Result<ffi::DrmModeGetCrtc> {
+        ffi::DrmModeGetCrtc::new(self.file.as_raw_fd(), id)
+    }
+
+    fn framebuffer(&self, id: FramebufferId) -> Result<ffi::DrmModeGetFb> {
+        ffi::DrmModeGetFb::new(self.file.as_raw_fd(), id)
     }
 }
 

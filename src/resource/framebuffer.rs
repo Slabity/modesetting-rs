@@ -1,4 +1,3 @@
-use super::super::Device;
 use super::Manager;
 use super::super::error::Result;
 use super::super::ffi;
@@ -8,9 +7,9 @@ use std::vec::IntoIter;
 
 pub type FramebufferId = ResourceId;
 
-#[derive(Debug, Clone)]
-pub struct Framebuffer {
-    device: Device,
+#[derive(Debug)]
+pub struct Framebuffer<'a> {
+    manager: &'a Manager<'a>,
     id: FramebufferId,
     size: (u32, u32),
     pitch: u32,
@@ -19,11 +18,10 @@ pub struct Framebuffer {
     handle: u32
 }
 
-impl<'a> From<(&'a Device, &'a ffi::DrmModeGetFb)> for Framebuffer {
-    fn from(dev_raw: (&Device, &ffi::DrmModeGetFb)) -> Framebuffer {
-        let (dev, raw) = dev_raw;
+impl<'a> Framebuffer<'a> {
+    fn from_raw(man: &'a Manager, raw: ffi::DrmModeGetFb) -> Framebuffer<'a> {
         Framebuffer {
-            device: (*dev).clone(),
+            manager: man,
             id: raw.raw.fb_id,
             size: (raw.raw.width, raw.raw.height),
             pitch: raw.raw.pitch,
@@ -34,28 +32,38 @@ impl<'a> From<(&'a Device, &'a ffi::DrmModeGetFb)> for Framebuffer {
     }
 }
 
+impl<'a> Drop for Framebuffer<'a> {
+    fn drop(&mut self) {
+        self.manager.unload_framebuffer(self.id);
+    }
+}
+
 #[derive(Clone)]
 pub struct Framebuffers<'a> {
     manager: &'a Manager<'a>,
-    fbs: IntoIter<FramebufferId>
+    framebuffers: IntoIter<FramebufferId>
 }
 
 impl<'a> Iterator for Framebuffers<'a> {
-    type Item = Result<Framebuffer>;
-    fn next(&mut self) -> Option<Result<Framebuffer>> {
-        match self.fbs.next() {
-            Some(id) => Some(self.manager.framebuffer(id)),
-            None => None
+    type Item = Result<Framebuffer<'a>>;
+    fn next(&mut self) -> Option<Result<Framebuffer<'a>>> {
+        let raw = match self.framebuffers.next() {
+            Some(id) => self.manager.load_framebuffer(id),
+            None => return None
+        };
+
+        match raw {
+            Ok(r) => Some(Ok(Framebuffer::from_raw(self.manager, r))),
+            Err(e) => Some(Err(e))
         }
     }
 }
 
-impl<'a> From<(&'a Manager<'a>, Vec<FramebufferId>)> for Framebuffers<'a> {
-    fn from(man_vec: (&'a Manager<'a>, Vec<FramebufferId>)) -> Framebuffers<'a> {
-        let (man, vec) = man_vec;
+impl<'a> Framebuffers<'a> {
+    pub fn new(man: &'a Manager<'a>, iter: IntoIter<FramebufferId>) -> Framebuffers<'a> {
         Framebuffers {
             manager: man,
-            fbs: vec.into_iter()
+            framebuffers: iter
         }
     }
 }

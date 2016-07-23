@@ -1,35 +1,32 @@
-use super::super::Device;
 use super::Manager;
 use super::super::error::Result;
 use super::super::ffi;
 use super::{ResourceId, CrtcId};
-use super::Crtc;
 
 use std::vec::IntoIter;
 
 pub type EncoderId = ResourceId;
 
 #[derive(Debug)]
-pub struct Encoder {
-    device: Device,
+pub struct Encoder<'a> {
+    manager: &'a Manager<'a>,
     id: EncoderId,
     crtc: CrtcId
 }
 
-impl Encoder {
-    pub fn current_crtc(&self) -> Result<Crtc> {
-        self.device.crtc(self.crtc)
-    }
-}
-
-impl<'a> From<(&'a Device, &'a ffi::DrmModeGetEncoder)> for Encoder {
-    fn from(dev_raw: (&Device, &ffi::DrmModeGetEncoder)) -> Encoder {
-        let (dev, raw) = dev_raw;
+impl<'a> Encoder<'a> {
+    fn from_raw(man: &'a Manager, raw: ffi::DrmModeGetEncoder) -> Encoder<'a> {
         Encoder {
-            device: (*dev).clone(),
+            manager: man,
             id: raw.raw.encoder_id,
             crtc: raw.raw.crtc_id
         }
+    }
+}
+
+impl<'a> Drop for Encoder<'a> {
+    fn drop(&mut self) {
+        self.manager.unload_encoder(self.id);
     }
 }
 
@@ -40,21 +37,25 @@ pub struct Encoders<'a> {
 }
 
 impl<'a> Iterator for Encoders<'a> {
-    type Item = Result<Encoder>;
-    fn next(&mut self) -> Option<Result<Encoder>> {
-        match self.encoders.next() {
-            Some(id) => Some(self.manager.encoder(id)),
-            None => None
+    type Item = Result<Encoder<'a>>;
+    fn next(&mut self) -> Option<Result<Encoder<'a>>> {
+        let raw = match self.encoders.next() {
+            Some(id) => self.manager.load_encoder(id),
+            None => return None
+        };
+
+        match raw {
+            Ok(r) => Some(Ok(Encoder::from_raw(self.manager, r))),
+            Err(e) => Some(Err(e))
         }
     }
 }
 
-impl<'a> From<(&'a Manager<'a>, Vec<EncoderId>)> for Encoders<'a> {
-    fn from(man_vec: (&'a Manager<'a>, Vec<EncoderId>)) -> Encoders<'a> {
-        let (man, vec) = man_vec;
+impl<'a> Encoders<'a> {
+    pub fn new(man: &'a Manager<'a>, iter: IntoIter<EncoderId>) -> Encoders<'a> {
         Encoders {
             manager: man,
-            encoders: vec.into_iter()
+            encoders: iter
         }
     }
 }

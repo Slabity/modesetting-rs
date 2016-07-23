@@ -1,4 +1,3 @@
-use super::super::Device;
 use super::Manager;
 use super::super::mode::Mode;
 use super::super::error::Result;
@@ -10,9 +9,9 @@ use std::vec::IntoIter;
 
 pub type ConnectorId = ResourceId;
 
-#[derive(Debug, Clone)]
-pub struct Connector {
-    device: Device,
+#[derive(Debug)]
+pub struct Connector<'a> {
+    manager: &'a Manager<'a>,
     id: ConnectorId,
     interface: ConnectorInterface,
     state: ConnectorState,
@@ -22,7 +21,20 @@ pub struct Connector {
     size: (u32, u32)
 }
 
-impl Connector {
+impl<'a> Connector<'a> {
+    fn from_raw(manager: &'a Manager, raw: ffi::DrmModeGetConnector) -> Connector<'a> {
+        Connector {
+            manager: manager,
+            id: raw.raw.connector_id,
+            interface: ConnectorInterface::from(raw.raw.connector_type),
+            state: ConnectorState::from(raw.raw.connection),
+            curr_encoder: raw.raw.encoder_id,
+            encoders: raw.encoders.clone(),
+            modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
+            size: (raw.raw.mm_width, raw.raw.mm_height)
+        }
+    }
+
     pub fn interface(&self) -> ConnectorInterface {
         self.interface
     }
@@ -32,19 +44,9 @@ impl Connector {
     }
 }
 
-impl<'a, 'b> From<(&'a Device, &'b ffi::DrmModeGetConnector)> for Connector {
-    fn from(dev_raw: (&Device, &ffi::DrmModeGetConnector)) -> Connector {
-        let (dev, raw) = dev_raw;
-        Connector {
-            device: (*dev).clone(),
-            id: raw.raw.connector_id,
-            interface: ConnectorInterface::from(raw.raw.connector_type),
-            state: ConnectorState::from(raw.raw.connection),
-            curr_encoder: raw.raw.encoder_id,
-            encoders: raw.encoders.clone(),
-            modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
-            size: (raw.raw.mm_width, raw.raw.mm_height)
-        }
+impl<'a> Drop for Connector<'a> {
+    fn drop(&mut self) {
+        self.manager.unload_connector(self.id);
     }
 }
 
@@ -55,21 +57,25 @@ pub struct Connectors<'a> {
 }
 
 impl<'a> Iterator for Connectors<'a> {
-    type Item = Result<Connector>;
-    fn next(&mut self) -> Option<Result<Connector>> {
-        match self.connectors.next() {
-            Some(id) => Some(self.manager.connector(id)),
-            None => None
+    type Item = Result<Connector<'a>>;
+    fn next(&mut self) -> Option<Result<Connector<'a>>> {
+        let raw = match self.connectors.next() {
+            Some(id) => self.manager.load_connector(id),
+            None => return None
+        };
+
+        match raw {
+            Ok(r) => Some(Ok(Connector::from_raw(self.manager, r))),
+            Err(e) => Some(Err(e))
         }
     }
 }
 
-impl<'a> From<(&'a Manager<'a>, Vec<ConnectorId>)> for Connectors<'a> {
-    fn from(man_vec: (&'a Manager<'a>, Vec<ConnectorId>)) -> Connectors<'a> {
-        let (man, vec) = man_vec;
+impl<'a> Connectors<'a> {
+    pub fn new(man: &'a Manager<'a>, iter: IntoIter<ConnectorId>) -> Connectors<'a> {
         Connectors {
             manager: man,
-            connectors: vec.into_iter()
+            connectors: iter
         }
     }
 }

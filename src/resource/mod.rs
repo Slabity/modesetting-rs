@@ -9,63 +9,140 @@ pub use self::crtc::*;
 pub use self::framebuffer::*;
 
 use super::Device;
+use super::error::Error;
 use super::error::Result;
 use super::ffi;
+
+use std::sync::Mutex;
 
 pub type ResourceId = u32;
 
 #[derive(Debug)]
 pub struct Manager<'a> {
     device: &'a Device,
-    connectors: Vec<ConnectorId>,
-    encoders: Vec<EncoderId>,
-    crtcs: Vec<CrtcId>,
-    framebuffers: Vec<FramebufferId>
+    connectors: Mutex<Vec<ConnectorId>>,
+    encoders: Mutex<Vec<EncoderId>>,
+    crtcs: Mutex<Vec<CrtcId>>,
+    framebuffers: Mutex<Vec<FramebufferId>>,
 }
 
 impl<'a> Manager<'a> {
-    pub fn connectors(&self) -> Connectors {
-        Connectors::from((self, self.connectors.clone()))
+    pub fn from_device(dev: &'a Device) -> Result<Manager<'a>> {
+        let raw = try!(dev.resources());
+        Ok(Manager {
+            device: dev,
+            connectors: Mutex::new(raw.connectors.clone()),
+            encoders: Mutex::new(raw.encoders.clone()),
+            crtcs: Mutex::new(raw.crtcs.clone()),
+            framebuffers: Mutex::new(raw.framebuffers.clone())
+        })
     }
 
-    pub fn encoders(&self) -> Encoders {
-        Encoders::from((self, self.encoders.clone()))
+    pub fn connectors(&'a self) -> Connectors {
+        let guard = self.connectors.lock().unwrap();
+        let iter = guard.clone().into_iter();
+        Connectors::new(self, iter)
     }
 
-    pub fn crtcs(&self) -> Crtcs {
-        Crtcs::from((self, self.crtcs.clone()))
+    pub fn encoders(&'a self) -> Encoders {
+        let guard = self.encoders.lock().unwrap();
+        let iter = guard.clone().into_iter();
+        Encoders::new(self, iter)
     }
 
-    pub fn framebuffers(&self) -> Framebuffers {
-        Framebuffers::from((self, self.framebuffers.clone()))
+    pub fn crtcs(&'a self) -> Crtcs {
+        let guard = self.crtcs.lock().unwrap();
+        let iter = guard.clone().into_iter();
+        Crtcs::new(self, iter)
     }
 
-    fn connector(&self, id: ConnectorId) -> Result<Connector> {
+    pub fn framebuffers(&'a self) -> Framebuffers {
+        let guard = self.framebuffers.lock().unwrap();
+        let iter = guard.clone().into_iter();
+        Framebuffers::new(self, iter)
+    }
+
+    fn load_connector(&'a self, id: ConnectorId) -> Result<ffi::DrmModeGetConnector> {
+        let pos = {
+            let guard = self.connectors.lock().unwrap();
+            guard.iter().position(| x | *x == id)
+        };
+        match pos {
+            Some(p) => {
+                let mut guard = self.connectors.lock().unwrap();
+                guard.remove(p);
+            },
+            None => return Err(Error::NotAvailable)
+        };
+
         self.device.connector(id)
     }
 
-    fn encoder(&self, id: EncoderId) -> Result<Encoder> {
+    fn unload_connector(&'a self, id: ConnectorId) {
+        let mut guard = self.connectors.lock().unwrap();
+        guard.push(id);
+    }
+
+    fn load_encoder(&'a self, id: EncoderId) -> Result<ffi::DrmModeGetEncoder> {
+        let pos = {
+            let guard = self.encoders.lock().unwrap();
+            guard.iter().position(| x | *x == id)
+        };
+        match pos {
+            Some(p) => {
+                let mut guard = self.encoders.lock().unwrap();
+                guard.remove(p);
+            },
+            None => return Err(Error::NotAvailable)
+        };
+
         self.device.encoder(id)
     }
 
-    fn crtc(&self, id: CrtcId) -> Result<Crtc> {
+    fn unload_encoder(&'a self, id: EncoderId) {
+        let mut guard = self.encoders.lock().unwrap();
+        guard.push(id);
+    }
+
+    fn load_crtc(&'a self, id: CrtcId) -> Result<ffi::DrmModeGetCrtc> {
+        let pos = {
+            let guard = self.crtcs.lock().unwrap();
+            guard.iter().position(| x | *x == id)
+        };
+        match pos {
+            Some(p) => {
+                let mut guard = self.crtcs.lock().unwrap();
+                guard.remove(p);
+            },
+            None => return Err(Error::NotAvailable)
+        };
+
         self.device.crtc(id)
     }
 
-    fn framebuffer(&self, id: FramebufferId) -> Result<Framebuffer> {
+    fn unload_crtc(&'a self, id: CrtcId) {
+        let mut guard = self.crtcs.lock().unwrap();
+        guard.push(id);
+    }
+
+    fn load_framebuffer(&'a self, id: FramebufferId) -> Result<ffi::DrmModeGetFb> {
+        let pos = {
+            let guard = self.framebuffers.lock().unwrap();
+            guard.iter().position(| x | *x == id)
+        };
+        match pos {
+            Some(p) => {
+                let mut guard = self.framebuffers.lock().unwrap();
+                guard.remove(p);
+            },
+            None => return Err(Error::NotAvailable)
+        };
+
         self.device.framebuffer(id)
     }
-}
 
-impl<'a, 'b> From<(&'a Device, &'b ffi::DrmModeCardRes)> for Manager<'a> {
-    fn from(dev_raw: (&'a Device, &ffi::DrmModeCardRes)) -> Manager<'a> {
-        let (dev, raw) = dev_raw;
-        Manager {
-            device: dev,
-            connectors: (*raw).connectors.clone(),
-            encoders: (*raw).encoders.clone(),
-            crtcs: (*raw).crtcs.clone(),
-            framebuffers: (*raw).framebuffers.clone()
-        }
+    fn unload_framebuffer(&'a self, id: FramebufferId) {
+        let mut guard = self.framebuffers.lock().unwrap();
+        guard.push(id);
     }
 }
