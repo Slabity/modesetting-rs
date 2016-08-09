@@ -1,12 +1,10 @@
 mod connector;
 mod encoder;
 mod crtc;
-mod framebuffer;
 
 pub use self::connector::*;
 pub use self::encoder::*;
 pub use self::crtc::*;
-pub use self::framebuffer::*;
 
 use super::Device;
 use super::error::Error;
@@ -23,7 +21,6 @@ pub struct Manager<'a> {
     connectors: Mutex<Vec<ConnectorId>>,
     encoders: Mutex<Vec<EncoderId>>,
     crtcs: Mutex<Vec<CrtcId>>,
-    framebuffers: Mutex<Vec<FramebufferId>>,
 }
 
 impl<'a> Manager<'a> {
@@ -34,7 +31,6 @@ impl<'a> Manager<'a> {
             connectors: Mutex::new(raw.connectors.clone()),
             encoders: Mutex::new(raw.encoders.clone()),
             crtcs: Mutex::new(raw.crtcs.clone()),
-            framebuffers: Mutex::new(raw.framebuffers.clone())
         })
     }
 
@@ -54,12 +50,6 @@ impl<'a> Manager<'a> {
         let guard = self.crtcs.lock().unwrap();
         let iter = guard.clone().into_iter();
         Crtcs::new(self, iter)
-    }
-
-    pub fn framebuffers(&'a self) -> Framebuffers {
-        let guard = self.framebuffers.lock().unwrap();
-        let iter = guard.clone().into_iter();
-        Framebuffers::new(self, iter)
     }
 
     fn load_connector(&'a self, id: ConnectorId) -> Result<ffi::DrmModeGetConnector> {
@@ -122,27 +112,6 @@ impl<'a> Manager<'a> {
 
     fn unload_crtc(&'a self, id: CrtcId) {
         let mut guard = self.crtcs.lock().unwrap();
-        guard.push(id);
-    }
-
-    fn load_framebuffer(&'a self, id: FramebufferId) -> Result<ffi::DrmModeGetFb> {
-        let pos = {
-            let guard = self.framebuffers.lock().unwrap();
-            guard.iter().position(| x | *x == id)
-        };
-        match pos {
-            Some(p) => {
-                let mut guard = self.framebuffers.lock().unwrap();
-                guard.remove(p);
-            },
-            None => return Err(Error::NotAvailable)
-        };
-
-        self.device.framebuffer(id)
-    }
-
-    fn unload_framebuffer(&'a self, id: FramebufferId) {
-        let mut guard = self.framebuffers.lock().unwrap();
         guard.push(id);
     }
 }

@@ -121,3 +121,14 @@ buffered_ioctl_struct!(
     Set fb_id to id with type u32;
     );
 
+buffered_ioctl_struct!(
+    Create DrmModeAddFb from drm_mode_fb_cmd;
+    Ioctl FFI_DRM_IOCTL_MODE_ADDFB;
+    Set width to width with type u32;
+    Set height to height with type u32;
+    Set pitch to pitch with type u32;
+    Set bpp to bpp with type u32;
+    Set depth to depth with type u32;
+    Set handle to handle with type u32;
+    );
+

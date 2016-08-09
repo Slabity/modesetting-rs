@@ -75,9 +75,11 @@ impl Device {
         ffi::DrmModeGetCrtc::new(self.file.as_raw_fd(), id)
     }
 
-    fn framebuffer(&self, id: FramebufferId) -> Result<ffi::DrmModeGetFb> {
-        ffi::DrmModeGetFb::new(self.file.as_raw_fd(), id)
+    fn framebuffer(&self, width: u32, height: u32, pitch: u32, bpp: u32, depth: u32, handle: u32)
+        -> Result<ffi::DrmModeAddFb> {
+        ffi::DrmModeAddFb::new(self.file.as_raw_fd(), width, height, pitch, bpp, depth, handle)
     }
+
 }
 
 
