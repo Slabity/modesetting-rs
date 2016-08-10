@@ -3,7 +3,7 @@ mod drm_shim;
 pub use self::drm_shim::*;
 use super::error::{Error, Result};
 use errno::errno;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{RawFd, AsRawFd};
 use libc::ioctl;
 
 // This macro simply wraps the ioctl call to return errno on failure
@@ -13,6 +13,34 @@ macro_rules! ioctl {
             return Err(Error::Ioctl(errno()));
         }
     })
+}
+
+// This trait represents all FFI functions that can be done without DrmMaster
+pub trait UnprivilegedHandle : AsRawFd {
+    fn add_fb(&self, width: u32, height: u32, pitch: u32, bpp: u32,
+               depth: u32, handle: u32) -> Result<DrmModeAddFb> {
+        let fd = self.as_raw_fd();
+        DrmModeAddFb::new(fd, width, height, pitch, bpp, depth, handle)
+    }
+}
+
+// This trait represents all FFI functions that require DrmMaster
+pub trait MasterHandle : UnprivilegedHandle {
+    fn card_res(&self) -> Result<DrmModeCardRes> {
+        DrmModeCardRes::new(self.as_raw_fd())
+    }
+
+    fn get_connector(&self, id: u32) -> Result<DrmModeGetConnector> {
+        DrmModeGetConnector::new(self.as_raw_fd(), id)
+    }
+
+    fn get_encoder(&self, id: u32) -> Result<DrmModeGetEncoder> {
+        DrmModeGetEncoder::new(self.as_raw_fd(), id)
+    }
+
+    fn get_crtc(&self, id: u32) -> Result<DrmModeGetCrtc> {
+        DrmModeGetCrtc::new(self.as_raw_fd(), id)
+    }
 }
 
 pub struct DrmModeCardRes {
