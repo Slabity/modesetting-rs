@@ -35,17 +35,22 @@ pub mod resource;
 pub mod mode;
 
 use error::{Result, Error};
-use self::resource::*;
+use mode::Mode;
 
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::sync::Mutex;
 use std::marker::PhantomData;
+use std::mem::transmute;
+use std::vec::IntoIter;
 
 pub type ResourceId = u32;
+pub type ConnectorId = ResourceId;
+pub type EncoderId = ResourceId;
+pub type ControllerId = ResourceId;
+pub type FramebufferId = ResourceId;
 
-#[derive(Debug)]
 pub struct Device {
     file: File
 }
@@ -91,18 +96,27 @@ impl Device {
         DumbBuffer::create(self, width, height, bpp)
     }
 
-    fn add_framebuffer(&self, width: u32, height: u32, pitch: u32, bpp: u32, depth: u32, handle: u32)
-        -> Result<ffi::DrmModeAddFb> {
-        ffi::DrmModeAddFb::new(self.file.as_raw_fd(), width, height, pitch, bpp, depth, handle)
+    pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer> {
+        let (width, height) = buffer.size();
+        let depth = buffer.depth();
+        let bpp = buffer.bpp();
+        let pitch = buffer.pitch();
+        let handle = buffer.handle();
+        let raw = try!(ffi::DrmModeAddFb::new(self.file.as_raw_fd(), width, height, depth, bpp, pitch, handle));
+        let fb = Framebuffer {
+            device: self,
+            id: raw.raw.fb_id
+        };
+        Ok(fb)
     }
 }
 
 #[derive(Debug)]
 pub struct MasterDevice<'a> {
     handle: RawFd,
-//    connectors: Mutex<Vec<ConnectorId>>,
-//    encoders: Mutex<Vec<EncoderId>>,
-//    crtcs: Mutex<Vec<CrtcId>>,
+    connectors: Mutex<Vec<ConnectorId>>,
+    encoders: Mutex<Vec<EncoderId>>,
+    controllers: Mutex<Vec<ControllerId>>,
     device: PhantomData<&'a Device>
 }
 
@@ -114,13 +128,146 @@ impl<'a> AsRawFd for MasterDevice<'a> {
 
 impl<'a> FromRawFd for MasterDevice<'a> {
     unsafe fn from_raw_fd(fd: RawFd) -> MasterDevice<'a> {
-        panic!("Not implemented")
+        let raw = ffi::DrmModeCardRes::new(fd).unwrap();
+        MasterDevice {
+            handle: fd,
+            connectors: Mutex::new(raw.connectors.clone()),
+            encoders: Mutex::new(raw.encoders.clone()),
+            controllers: Mutex::new(raw.crtcs.clone()),
+            device: PhantomData
+        }
     }
 }
 
 impl<'a> IntoRawFd for MasterDevice<'a> {
     fn into_raw_fd(self) -> RawFd {
         self.handle
+    }
+}
+
+impl<'a> MasterDevice<'a> {
+    fn from_device(device: &'a Device) -> MasterDevice<'a> {
+        unsafe {
+            Self::from_raw_fd(device.as_raw_fd())
+        }
+    }
+
+    pub fn connectors(&'a self) -> Connectors<'a> {
+        let guard = self.connectors.lock().unwrap();
+        let iter = guard.clone().into_iter();
+        Connectors::new(self, iter)
+    }
+
+    pub fn encoders(&'a self) -> Encoders<'a> {
+        let guard = self.encoders.lock().unwrap();
+        let iter = guard.clone().into_iter();
+        Encoders::new(self, iter)
+    }
+
+    pub fn controllers(&'a self) -> DisplayControllers<'a> {
+        let guard = self.controllers.lock().unwrap();
+        let iter = guard.clone().into_iter();
+        DisplayControllers::new(self, iter)
+    }
+
+    pub fn connector(&'a self, id: ConnectorId) -> Result<Connector<'a>> {
+        let pos = {
+            let guard = self.connectors.lock().unwrap();
+            guard.iter().position(| x | *x == id)
+        };
+        match pos {
+            Some(p) => {
+                let mut guard = self.connectors.lock().unwrap();
+                guard.remove(p);
+            },
+            None => return Err(Error::NotAvailable)
+        };
+
+        let raw = try!(ffi::DrmModeGetConnector::new(self.handle, id));
+
+        let connector = Connector {
+            device: self,
+            id: raw.raw.connector_id,
+            interface: ConnectorInterface::from(raw.raw.connector_type),
+            state: ConnectorState::from(raw.raw.connection),
+            curr_encoder: raw.raw.encoder_id,
+            encoders: raw.encoders.clone(),
+            modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
+            size: (raw.raw.mm_width, raw.raw.mm_height)
+        };
+
+        Ok(connector)
+    }
+
+    pub fn encoder(&'a self, id: EncoderId) -> Result<Encoder<'a>> {
+        let pos = {
+            let guard = self.encoders.lock().unwrap();
+            guard.iter().position(| x | *x == id)
+        };
+        match pos {
+            Some(p) => {
+                let mut guard = self.encoders.lock().unwrap();
+                guard.remove(p);
+            },
+            None => return Err(Error::NotAvailable)
+        };
+
+        let raw = try!(ffi::DrmModeGetEncoder::new(self.handle, id));
+
+        let encoder = Encoder {
+            device: self,
+            id: raw.raw.encoder_id
+        };
+
+        Ok(encoder)
+    }
+
+    pub fn controller(&'a self, id: ControllerId) -> Result<DisplayController<'a>> {
+        let pos = {
+            let guard = self.controllers.lock().unwrap();
+            guard.iter().position(| x | *x == id)
+        };
+        match pos {
+            Some(p) => {
+                let mut guard = self.controllers.lock().unwrap();
+                guard.remove(p);
+            },
+            None => return Err(Error::NotAvailable)
+        };
+
+        let raw = try!(ffi::DrmModeGetCrtc::new(self.handle, id));
+
+        let controller = DisplayController {
+            device: self,
+            id: raw.raw.crtc_id
+        };
+
+        Ok(controller)
+    }
+    fn unload_connector(&'a self, id: ConnectorId) {
+        let mut guard = self.connectors.lock().unwrap();
+        guard.push(id);
+    }
+
+    fn unload_encoder(&'a self, id: EncoderId) {
+        let mut guard = self.encoders.lock().unwrap();
+        guard.push(id);
+    }
+
+    fn unload_controller(&'a self, id: ControllerId) {
+        let mut guard = self.controllers.lock().unwrap();
+        guard.push(id);
+    }
+}
+
+pub struct Framebuffer<'a> {
+    device: &'a AsRawFd,
+    id: FramebufferId
+}
+
+impl<'a> Drop for Framebuffer<'a> {
+    fn drop(&mut self) {
+        // TODO: Remove FB from device here.
     }
 }
 
@@ -169,3 +316,170 @@ impl<'a> Buffer for DumbBuffer<'a> {
     fn pitch(&self) -> u32 { self.pitch }
     fn handle(&self) -> u32 { self.handle }
 }
+
+#[derive(Debug)]
+pub struct Connector<'a> {
+    device: &'a MasterDevice<'a>,
+    id: ConnectorId,
+    interface: ConnectorInterface,
+    state: ConnectorState,
+    curr_encoder: EncoderId,
+    encoders: Vec<EncoderId>,
+    modes: Vec<Mode>,
+    size: (u32, u32)
+}
+
+impl<'a> Connector<'a> {
+    pub fn interface(&self) -> ConnectorInterface {
+        self.interface
+    }
+
+    pub fn state(&self) -> ConnectorState {
+        self.state
+    }
+}
+
+impl<'a> Drop for Connector<'a> {
+    fn drop(&mut self) {
+        self.device.unload_connector(self.id);
+    }
+}
+
+#[derive(Clone)]
+pub struct Connectors<'a> {
+    device: &'a MasterDevice<'a>,
+    connectors: IntoIter<ConnectorId>
+}
+
+impl<'a> Iterator for Connectors<'a> {
+    type Item = Result<Connector<'a>>;
+    fn next(&mut self) -> Option<Result<Connector<'a>>> {
+        match self.connectors.next() {
+            Some(id) => Some(self.device.connector(id)),
+            None => None
+        }
+    }
+}
+
+impl<'a> Connectors<'a> {
+    pub fn new(device: &'a MasterDevice<'a>, iter: IntoIter<ConnectorId>) -> Connectors<'a> {
+        Connectors {
+            device: device,
+            connectors: iter
+        }
+    }
+}
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ConnectorInterface {
+    Unknown = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Unknown as isize,
+    VGA = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_VGA as isize,
+    DVII = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DVII as isize,
+    DVID = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DVID as isize,
+    DVIA = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DVIA as isize,
+    Composite = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Composite as isize,
+    SVideo = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_SVIDEO as isize,
+    LVDS = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_LVDS as isize,
+    Component = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Component as isize,
+    NinePinDIN = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_9PinDIN as isize,
+    DisplayPort = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DisplayPort as isize,
+    HDMIA = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_HDMIA as isize,
+    HDMIB = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_HDMIB as isize,
+    TV = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_TV as isize,
+    EDP = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_eDP as isize,
+    Virtual = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_VIRTUAL as isize,
+    DSI = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DSI as isize,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ConnectorState {
+    Connected = ffi::Connection::FFI_DRM_MODE_CONNECTED as isize,
+    Disconnected = ffi::Connection::FFI_DRM_MODE_DISCONNECTED as isize,
+    Unknown = ffi::Connection::FFI_DRM_MODE_UNKNOWN as isize
+}
+
+impl From<u32> for ConnectorInterface {
+    fn from(ty: u32) -> ConnectorInterface {
+        unsafe { transmute(ty as u8) }
+    }
+}
+
+impl From<u32> for ConnectorState {
+    fn from(ty: u32) -> ConnectorState {
+        unsafe { transmute(ty as u8) }
+    }
+}
+
+#[derive(Debug)]
+pub struct Encoder<'a> {
+    device: &'a MasterDevice<'a>,
+    id: EncoderId,
+}
+
+impl<'a> Drop for Encoder<'a> {
+    fn drop(&mut self) {
+        self.device.unload_encoder(self.id);
+    }
+}
+
+#[derive(Clone)]
+pub struct Encoders<'a> {
+    device: &'a MasterDevice<'a>,
+    encoders: IntoIter<EncoderId>
+}
+
+impl<'a> Iterator for Encoders<'a> {
+    type Item = Result<Encoder<'a>>;
+    fn next(&mut self) -> Option<Result<Encoder<'a>>> {
+        match self.encoders.next() {
+            Some(id) => Some(self.device.encoder(id)),
+            None => None
+        }
+    }
+}
+
+impl<'a> Encoders<'a> {
+    pub fn new(device: &'a MasterDevice<'a>, iter: IntoIter<EncoderId>) -> Encoders<'a> {
+        Encoders {
+            device: device,
+            encoders: iter
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DisplayController<'a> {
+    device: &'a MasterDevice<'a>,
+    id: ControllerId
+}
+
+impl<'a> Drop for DisplayController<'a> {
+    fn drop(&mut self) {
+        self.device.unload_controller(self.id);
+    }
+}
+
+#[derive(Clone)]
+pub struct DisplayControllers<'a> {
+    device: &'a MasterDevice<'a>,
+    controllers: IntoIter<ControllerId>
+}
+
+impl<'a> Iterator for DisplayControllers<'a> {
+    type Item = Result<DisplayController<'a>>;
+    fn next(&mut self) -> Option<Result<DisplayController<'a>>> {
+        match self.controllers.next() {
+            Some(id) => Some(self.device.controller(id)),
+            None => return None
+        }
+    }
+}
+
+impl<'a> DisplayControllers<'a> {
+    pub fn new(device: &'a MasterDevice, iter: IntoIter<ControllerId>) -> DisplayControllers<'a> {
+        DisplayControllers {
+            device: device,
+            controllers: iter
+        }
+    }
+}
+

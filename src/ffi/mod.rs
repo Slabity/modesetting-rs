@@ -3,7 +3,7 @@ mod drm_shim;
 pub use self::drm_shim::*;
 use super::error::{Error, Result};
 use errno::errno;
-use std::os::unix::io::{RawFd, AsRawFd};
+use std::os::unix::io::RawFd;
 use libc::ioctl;
 
 // This macro simply wraps the ioctl call to return errno on failure
@@ -15,6 +15,7 @@ macro_rules! ioctl {
     })
 }
 
+#[derive(Debug)]
 pub struct DrmModeCardRes {
     pub raw: drm_mode_card_res,
     pub connectors: Vec<u32>,
@@ -60,6 +61,7 @@ impl DrmModeCardRes {
     }
 }
 
+#[derive(Debug)]
 pub struct DrmModeGetConnector {
     pub raw: drm_mode_get_connector,
     pub encoders: Vec<u32>,
@@ -106,6 +108,7 @@ impl DrmModeGetConnector {
     }
 }
 
+#[derive(Debug)]
 pub struct DrmModeGetEncoder {
     pub raw: drm_mode_get_encoder
 }
@@ -120,6 +123,7 @@ impl DrmModeGetEncoder {
     }
 }
 
+#[derive(Debug)]
 pub struct DrmModeGetCrtc {
     pub raw: drm_mode_crtc
 }
@@ -134,19 +138,20 @@ impl DrmModeGetCrtc {
     }
 }
 
+#[derive(Debug)]
 pub struct DrmModeAddFb {
     pub raw: drm_mode_fb_cmd
 }
 
 impl DrmModeAddFb {
-    pub fn new(fd: RawFd, width: u32, height: u32, pitch: u32, bpp: u32,
-               depth: u32, handle: u32) -> Result<DrmModeAddFb> {
+    pub fn new(fd: RawFd, width: u32, height: u32, depth: u8, bpp: u8,
+               pitch: u32, handle: u32) -> Result<DrmModeAddFb> {
         let mut raw: drm_mode_fb_cmd = Default::default();
         raw.width = width;
         raw.height = height;
+        raw.depth = depth as u32;
+        raw.bpp = bpp as u32;
         raw.pitch = pitch;
-        raw.bpp = bpp;
-        raw.depth = depth;
         raw.handle = handle;
         ioctl!(fd, FFI_DRM_IOCTL_MODE_ADDFB, &raw);
         let fb = DrmModeAddFb { raw: raw };
@@ -154,6 +159,7 @@ impl DrmModeAddFb {
     }
 }
 
+#[derive(Debug)]
 pub struct DrmModeCreateDumbBuffer {
     pub raw: drm_mode_create_dumb
 }
@@ -170,6 +176,7 @@ impl DrmModeCreateDumbBuffer {
     }
 }
 
+#[derive(Debug)]
 pub struct DrmModeMapDumbBuffer {
     pub raw: drm_mode_map_dumb
 }
@@ -184,6 +191,7 @@ impl DrmModeMapDumbBuffer {
     }
 }
 
+#[derive(Debug)]
 pub struct DrmModeDestroyDumbBuffer {
     pub raw: drm_mode_destroy_dumb
 }
