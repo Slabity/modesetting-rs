@@ -15,40 +15,12 @@ macro_rules! ioctl {
     })
 }
 
-// This trait represents all FFI functions that can be done without DrmMaster
-pub trait UnprivilegedHandle : AsRawFd {
-    fn add_fb(&self, width: u32, height: u32, pitch: u32, bpp: u32,
-               depth: u32, handle: u32) -> Result<DrmModeAddFb> {
-        let fd = self.as_raw_fd();
-        DrmModeAddFb::new(fd, width, height, pitch, bpp, depth, handle)
-    }
-}
-
-// This trait represents all FFI functions that require DrmMaster
-pub trait MasterHandle : UnprivilegedHandle {
-    fn card_res(&self) -> Result<DrmModeCardRes> {
-        DrmModeCardRes::new(self.as_raw_fd())
-    }
-
-    fn get_connector(&self, id: u32) -> Result<DrmModeGetConnector> {
-        DrmModeGetConnector::new(self.as_raw_fd(), id)
-    }
-
-    fn get_encoder(&self, id: u32) -> Result<DrmModeGetEncoder> {
-        DrmModeGetEncoder::new(self.as_raw_fd(), id)
-    }
-
-    fn get_crtc(&self, id: u32) -> Result<DrmModeGetCrtc> {
-        DrmModeGetCrtc::new(self.as_raw_fd(), id)
-    }
-}
-
 pub struct DrmModeCardRes {
     pub raw: drm_mode_card_res,
     pub connectors: Vec<u32>,
     pub encoders: Vec<u32>,
     pub crtcs: Vec<u32>,
-    pub framebuffers: Vec<u32>,
+    pub framebuffers: Vec<u32>
 }
 
 impl DrmModeCardRes {
@@ -93,7 +65,7 @@ pub struct DrmModeGetConnector {
     pub encoders: Vec<u32>,
     pub modes: Vec<drm_mode_modeinfo>,
     pub properties: Vec<u32>,
-    pub prop_values: Vec<u32>,
+    pub prop_values: Vec<u32>
 }
 
 impl DrmModeGetConnector {
@@ -135,7 +107,7 @@ impl DrmModeGetConnector {
 }
 
 pub struct DrmModeGetEncoder {
-    pub raw: drm_mode_get_encoder,
+    pub raw: drm_mode_get_encoder
 }
 
 impl DrmModeGetEncoder {
@@ -149,7 +121,7 @@ impl DrmModeGetEncoder {
 }
 
 pub struct DrmModeGetCrtc {
-    pub raw: drm_mode_crtc,
+    pub raw: drm_mode_crtc
 }
 
 impl DrmModeGetCrtc {
@@ -163,7 +135,7 @@ impl DrmModeGetCrtc {
 }
 
 pub struct DrmModeAddFb {
-    pub raw: drm_mode_fb_cmd,
+    pub raw: drm_mode_fb_cmd
 }
 
 impl DrmModeAddFb {
@@ -177,8 +149,51 @@ impl DrmModeAddFb {
         raw.depth = depth;
         raw.handle = handle;
         ioctl!(fd, FFI_DRM_IOCTL_MODE_ADDFB, &raw);
-        let new = DrmModeAddFb { raw: raw };
-        Ok(new)
+        let fb = DrmModeAddFb { raw: raw };
+        Ok(fb)
     }
 }
 
+pub struct DrmModeCreateDumbBuffer {
+    pub raw: drm_mode_create_dumb
+}
+
+impl DrmModeCreateDumbBuffer {
+    pub fn new(fd: RawFd, width: u32, height: u32, bpp: u8) -> Result<DrmModeCreateDumbBuffer> {
+        let mut raw: drm_mode_create_dumb = Default::default();
+        raw.width = width;
+        raw.height = height;
+        raw.bpp = bpp as u32;
+        ioctl!(fd, FFI_DRM_IOCTL_MODE_CREATE_DUMB, &raw);
+        let buffer = DrmModeCreateDumbBuffer { raw: raw };
+        Ok(buffer)
+    }
+}
+
+pub struct DrmModeMapDumbBuffer {
+    pub raw: drm_mode_map_dumb
+}
+
+impl DrmModeMapDumbBuffer {
+    pub fn new(fd: RawFd, handle: u32) -> Result<DrmModeMapDumbBuffer> {
+        let mut raw: drm_mode_map_dumb = Default::default();
+        raw.handle = handle;
+        ioctl!(fd, FFI_DRM_IOCTL_MODE_MAP_DUMB, &raw);
+        let map = DrmModeMapDumbBuffer { raw: raw };
+        Ok(map)
+    }
+}
+
+pub struct DrmModeDestroyDumbBuffer {
+    pub raw: drm_mode_destroy_dumb
+}
+
+impl DrmModeDestroyDumbBuffer {
+    pub fn new(fd: RawFd, handle: u32) -> Result<DrmModeDestroyDumbBuffer> {
+        let mut raw: drm_mode_destroy_dumb = Default::default();
+        raw.handle = handle;
+        ioctl!(fd, FFI_DRM_IOCTL_MODE_MAP_DUMB, &raw);
+        let destroy = DrmModeDestroyDumbBuffer { raw: raw };
+        Ok(destroy)
+    }
+}
