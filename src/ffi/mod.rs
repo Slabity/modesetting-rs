@@ -67,7 +67,7 @@ pub struct DrmModeGetConnector {
     pub encoders: Vec<u32>,
     pub modes: Vec<drm_mode_modeinfo>,
     pub properties: Vec<u32>,
-    pub prop_values: Vec<u32>
+    pub prop_values: Vec<u64>
 }
 
 impl DrmModeGetConnector {
@@ -84,7 +84,7 @@ impl DrmModeGetConnector {
             vec![Default::default(); raw.count_modes as usize];
         let mut properties: Vec<u32> =
             vec![Default::default(); raw.count_props as usize];
-        let mut prop_values: Vec<u32> =
+        let mut prop_values: Vec<u64> =
             vec![Default::default(); raw.count_props as usize];
 
         // Pass a handle to the buffers to the raw struct

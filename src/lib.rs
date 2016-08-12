@@ -31,7 +31,6 @@ extern crate errno;
 
 mod ffi;
 pub mod error;
-pub mod resource;
 pub mod mode;
 
 use error::{Result, Error};
@@ -117,6 +116,7 @@ pub struct MasterDevice<'a> {
     connectors: Mutex<Vec<ConnectorId>>,
     encoders: Mutex<Vec<EncoderId>>,
     controllers: Mutex<Vec<ControllerId>>,
+    controllers_order: Vec<ControllerId>,
     device: PhantomData<&'a Device>
 }
 
@@ -134,6 +134,7 @@ impl<'a> FromRawFd for MasterDevice<'a> {
             connectors: Mutex::new(raw.connectors.clone()),
             encoders: Mutex::new(raw.encoders.clone()),
             controllers: Mutex::new(raw.crtcs.clone()),
+            controllers_order: raw.crtcs.clone(),
             device: PhantomData
         }
     }
@@ -190,7 +191,7 @@ impl<'a> MasterDevice<'a> {
             id: raw.raw.connector_id,
             interface: ConnectorInterface::from(raw.raw.connector_type),
             state: ConnectorState::from(raw.raw.connection),
-            curr_encoder: raw.raw.encoder_id,
+            curr_encoder: None,
             encoders: raw.encoders.clone(),
             modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
             size: (raw.raw.mm_width, raw.raw.mm_height)
@@ -213,10 +214,19 @@ impl<'a> MasterDevice<'a> {
         };
 
         let raw = try!(ffi::DrmModeGetEncoder::new(self.handle, id));
+        let mut possible_controllers = Vec::new();
+        let mut pos_bits = raw.raw.possible_crtcs;
+        for id in self.controllers_order.iter() {
+            if (pos_bits & 0x1) == 0x1 {
+                possible_controllers.push(*id);
+            }
+            pos_bits = pos_bits >> 1;
+        }
 
         let encoder = Encoder {
             device: self,
-            id: raw.raw.encoder_id
+            id: raw.raw.encoder_id,
+            controllers: possible_controllers
         };
 
         Ok(encoder)
@@ -323,19 +333,26 @@ pub struct Connector<'a> {
     id: ConnectorId,
     interface: ConnectorInterface,
     state: ConnectorState,
-    curr_encoder: EncoderId,
+    curr_encoder: Option<EncoderId>,
     encoders: Vec<EncoderId>,
     modes: Vec<Mode>,
     size: (u32, u32)
 }
 
 impl<'a> Connector<'a> {
-    pub fn interface(&self) -> ConnectorInterface {
+    pub fn interface(&'a self) -> ConnectorInterface {
         self.interface
     }
 
-    pub fn state(&self) -> ConnectorState {
+    pub fn state(&'a self) -> ConnectorState {
         self.state
+    }
+
+    pub fn encoders(&'a self) -> Encoders<'a> {
+        Encoders {
+            device: self.device,
+            encoders: self.encoders.clone().into_iter()
+        }
     }
 }
 
@@ -369,6 +386,7 @@ impl<'a> Connectors<'a> {
         }
     }
 }
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ConnectorInterface {
     Unknown = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Unknown as isize,
@@ -413,6 +431,7 @@ impl From<u32> for ConnectorState {
 pub struct Encoder<'a> {
     device: &'a MasterDevice<'a>,
     id: EncoderId,
+    controllers: Vec<ControllerId>
 }
 
 impl<'a> Drop for Encoder<'a> {
@@ -425,6 +444,15 @@ impl<'a> Drop for Encoder<'a> {
 pub struct Encoders<'a> {
     device: &'a MasterDevice<'a>,
     encoders: IntoIter<EncoderId>
+}
+
+impl<'a> Encoder<'a> {
+    pub fn controllers(&'a self) -> DisplayControllers<'a> {
+        DisplayControllers {
+            device: self.device,
+            controllers: self.controllers.clone().into_iter()
+        }
+    }
 }
 
 impl<'a> Iterator for Encoders<'a> {
