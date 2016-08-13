@@ -44,6 +44,8 @@ use std::marker::PhantomData;
 use std::mem::transmute;
 use std::vec::IntoIter;
 
+use libc::{mmap, munmap, PROT_READ, PROT_WRITE, MAP_SHARED};
+
 pub type ResourceId = u32;
 pub type ConnectorId = ResourceId;
 pub type EncoderId = ResourceId;
@@ -249,7 +251,9 @@ impl<'a> MasterDevice<'a> {
 
         let controller = DisplayController {
             device: self,
-            id: raw.raw.crtc_id
+            id: raw.raw.crtc_id,
+            connectors: Vec::new(),
+            framebuffer: None
         };
 
         Ok(controller)
@@ -295,7 +299,8 @@ pub struct DumbBuffer<'a> {
     depth: u8,
     bpp: u8,
     pitch: u32,
-    handle: u32
+    handle: u32,
+    raw_size: usize
 }
 
 impl<'a> DumbBuffer<'a> {
@@ -307,9 +312,20 @@ impl<'a> DumbBuffer<'a> {
             depth: 24,
             bpp: bpp,
             pitch: raw.raw.pitch,
-            handle: raw.raw.handle
+            handle: raw.raw.handle,
+            raw_size: raw.raw.size as usize
         };
         Ok(buffer)
+    }
+
+    pub fn map(&self) -> Result<&mut [u8]> {
+        let raw = try!(ffi::DrmModeMapDumbBuffer::new(self.device.as_raw_fd(), self.handle));
+        let ptr = unsafe {
+            mmap(std::ptr::null_mut(), self.raw_size, PROT_READ | PROT_WRITE, MAP_SHARED, self.device.as_raw_fd(), raw.raw.offset as i64)
+        } as *mut u8;
+        Ok(unsafe {
+            std::slice::from_raw_parts_mut(ptr, self.raw_size)
+        })
     }
 }
 
@@ -333,26 +349,40 @@ pub struct Connector<'a> {
     id: ConnectorId,
     interface: ConnectorInterface,
     state: ConnectorState,
-    curr_encoder: Option<EncoderId>,
+    curr_encoder: Option<Encoder<'a>>,
     encoders: Vec<EncoderId>,
     modes: Vec<Mode>,
     size: (u32, u32)
 }
 
 impl<'a> Connector<'a> {
-    pub fn interface(&'a self) -> ConnectorInterface {
+    pub fn interface(&self) -> ConnectorInterface {
         self.interface
     }
 
-    pub fn state(&'a self) -> ConnectorState {
+    pub fn state(&self) -> ConnectorState {
         self.state
     }
 
-    pub fn encoders(&'a self) -> Encoders<'a> {
+    pub fn encoders(&self) -> Encoders<'a> {
         Encoders {
             device: self.device,
             encoders: self.encoders.clone().into_iter()
         }
+    }
+
+    pub fn attach_encoder(&mut self, encoder: Encoder<'a>) -> Result<()> {
+        match self.encoders.iter().any(| &enc | enc == encoder.id) {
+            true => {
+                self.curr_encoder = Some(encoder);
+                Ok(())
+            },
+            false => Err(Error::Incompatible)
+        }
+    }
+
+    pub fn modes(&self) -> Vec<Mode> {
+        self.modes.clone()
     }
 }
 
@@ -447,7 +477,7 @@ pub struct Encoders<'a> {
 }
 
 impl<'a> Encoder<'a> {
-    pub fn controllers(&'a self) -> DisplayControllers<'a> {
+    pub fn controllers(&self) -> DisplayControllers<'a> {
         DisplayControllers {
             device: self.device,
             controllers: self.controllers.clone().into_iter()
@@ -474,10 +504,21 @@ impl<'a> Encoders<'a> {
     }
 }
 
-#[derive(Debug)]
 pub struct DisplayController<'a> {
     device: &'a MasterDevice<'a>,
-    id: ControllerId
+    id: ControllerId,
+    connectors: Vec<Connector<'a>>,
+    framebuffer: Option<&'a Framebuffer<'a>>
+}
+
+impl<'a> DisplayController<'a> {
+    pub fn set_controller(&mut self, fb: &'a Framebuffer<'a>, connectors: Vec<Connector<'a>>, mode: Mode) {
+        self.framebuffer = Some(fb);
+        self.connectors = connectors;
+
+        let connector_ids: Vec<u32> = self.connectors.iter().map(| con | con.id).collect();
+        ffi::DrmModeSetCrtc::new(self.device.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.into());
+    }
 }
 
 impl<'a> Drop for DisplayController<'a> {

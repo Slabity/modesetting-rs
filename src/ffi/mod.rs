@@ -139,6 +139,28 @@ impl DrmModeGetCrtc {
 }
 
 #[derive(Debug)]
+pub struct DrmModeSetCrtc {
+    pub raw: drm_mode_crtc
+}
+
+impl DrmModeSetCrtc {
+    pub fn new(fd: RawFd, id: u32, fb_id: u32, x: u32, y: u32, mut connectors: Vec<u32>, mode: drm_mode_modeinfo) -> Result<DrmModeSetCrtc> {
+        let mut raw: drm_mode_crtc = Default::default();
+        raw.crtc_id = id;
+        raw.fb_id = fb_id;
+        raw.x = x;
+        raw.y = y;
+        raw.mode = mode;
+        raw.mode_valid = 1;
+        raw.count_connectors = connectors.len() as u32;
+        raw.set_connectors_ptr = connectors.as_mut_slice().as_mut_ptr() as u64;
+        ioctl!(fd, FFI_DRM_IOCTL_MODE_SETCRTC, &raw);
+        let crtc = DrmModeSetCrtc { raw: raw };
+        Ok(crtc)
+    }
+}
+
+#[derive(Debug)]
 pub struct DrmModeAddFb {
     pub raw: drm_mode_fb_cmd
 }
