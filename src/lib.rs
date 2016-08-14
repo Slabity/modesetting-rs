@@ -127,6 +127,11 @@ impl Device {
         };
         Ok(fb)
     }
+
+    /// Acquire the master lock and provide a MasterDevice
+    pub fn master_lock(&self) -> Result<MasterDevice> {
+        Ok(MasterDevice::from_device(self))
+    }
 }
 
 /// A `MasterDevice` is an privileged handle to the character device file that
