@@ -13,15 +13,14 @@
   - Connectors: The physical interfaces on your GPU, such as HDMI, VGA, and
   LVDS ports.
   - Encoders: These modify and deliver the pixel data to the connectors.
-  - CRTCs: Points to a scanout buffer in video memory and reads it based on the
-  mode it is set to.
-  - Framebuffer: Pixel data that can be used by a CRTC
+  - Display Controllers: Controls the scanout of a Framebuffer to one or more
+  Connectos.
+  - Framebuffer: Pixel data that can be used by a Display Controller
 
-  The standard procedure to do this is to first open the device. Then choose
-  the connectors you wish to use. For each connector, get your desired mode and
-  choose an available CRTC to use (in most situations, attaching a CRTC to a
-  connector will automatically choose the preferred encoder). Once you have a
-  suitable Connector, CRTC, and Mode, you can create a framebuffer for scanout.
+  The standard procedure to do this is to first open the device and select the
+  Connectors you will use. For each Connector, decide on a mode you will use
+  and attach the proper Encoders. Create the Framebuffers you wish to display
+  and set up the Display Controllers for proper scanout.
 
   For more information, see the `drm-kms` man page.
   */
@@ -52,16 +51,28 @@ pub type EncoderId = ResourceId;
 pub type ControllerId = ResourceId;
 pub type FramebufferId = ResourceId;
 
+/// A `Device` is an unprivileged handle to the character device file that
+/// provides modesetting capabilities.
 pub struct Device {
     file: File
 }
 
+/// Retrieve the raw file descriptor of the character device.
 impl AsRawFd for Device {
     fn as_raw_fd(&self) -> RawFd {
         self.file.as_raw_fd()
     }
 }
 
+/// Create a `Device` from an already opened file descriptor.
+///
+/// # Safety
+///
+/// The newly created `Device` assumes it is the sole owner of the file
+/// descriptor. Closing the file descriptor elsewhere will lead to a panic.
+///
+/// It is assumed that the provided file descriptor has both read and write
+/// options enabled.
 impl FromRawFd for Device {
     unsafe fn from_raw_fd(fd: RawFd) -> Device {
         Device {
@@ -70,12 +81,14 @@ impl FromRawFd for Device {
     }
 }
 
+/// Consumes ownership of the `Device` and returns a raw file descriptor.
 impl IntoRawFd for Device {
     fn into_raw_fd(self) -> RawFd {
         self.file.into_raw_fd()
     }
 }
 
+/// Take an already opened `File` and treat it as a `Device`
 impl From<File> for Device {
     fn from(file: File) -> Device {
         Device {
@@ -85,6 +98,7 @@ impl From<File> for Device {
 }
 
 impl Device {
+    /// Attempt to open the file specified at the given path.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Device> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
         let dev = Device {
@@ -93,10 +107,13 @@ impl Device {
         Ok(dev)
     }
 
+    /// Attempt to create a `DumbBuffer` object for this device.
     pub fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
         DumbBuffer::create(self, width, height, bpp)
     }
 
+    /// Attempt to create an abstract `Framebuffer` object from the provided
+    /// `Buffer`.
     pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer> {
         let (width, height) = buffer.size();
         let depth = buffer.depth();
@@ -112,7 +129,15 @@ impl Device {
     }
 }
 
-#[derive(Debug)]
+/// A `MasterDevice` is an privileged handle to the character device file that
+/// provides modesetting capabilities.
+///
+/// Unlike a `Device`, a `MasterDevice` does not own the file descriptor used.
+/// It is the responsibility of the program to open and close the file
+/// descriptor.
+///
+/// A `MasterDevice` can be used to access various modesetting resources. It
+/// also prevents dual ownership of any single resource in multiple locations.
 pub struct MasterDevice<'a> {
     handle: RawFd,
     connectors: Mutex<Vec<ConnectorId>>,
@@ -122,13 +147,17 @@ pub struct MasterDevice<'a> {
     device: PhantomData<&'a Device>
 }
 
-impl<'a> AsRawFd for MasterDevice<'a> {
-    fn as_raw_fd(&self) -> RawFd {
-        self.handle
-    }
-}
-
 impl<'a> FromRawFd for MasterDevice<'a> {
+    /// Create a `MasterDevice` from an already opened file descriptor.
+    ///
+    /// # Safety
+    ///
+    /// The `MasterDevice` does not assume ownership of the file descriptor.
+    /// Closing the file descriptor while the `MasterDevice` is in scope may lead
+    /// to panics and errors.
+    ///
+    /// It is assumed that the provided file descriptor has both read and write
+    /// options enabled.
     unsafe fn from_raw_fd(fd: RawFd) -> MasterDevice<'a> {
         let raw = ffi::DrmModeCardRes::new(fd).unwrap();
         MasterDevice {
@@ -142,37 +171,42 @@ impl<'a> FromRawFd for MasterDevice<'a> {
     }
 }
 
-impl<'a> IntoRawFd for MasterDevice<'a> {
-    fn into_raw_fd(self) -> RawFd {
-        self.handle
-    }
-}
-
 impl<'a> MasterDevice<'a> {
+    /// Create a `MasterDevice` from a `Device`. The newly created
+    /// `MasterDevice` will not outlive the `Device` it is created from.
     fn from_device(device: &'a Device) -> MasterDevice<'a> {
         unsafe {
             Self::from_raw_fd(device.as_raw_fd())
         }
     }
 
+    /// Return an iterator over the list of connectors.
     pub fn connectors(&'a self) -> Connectors<'a> {
         let guard = self.connectors.lock().unwrap();
         let iter = guard.clone().into_iter();
         Connectors::new(self, iter)
     }
 
+    /// Return an iterator over the list of encoders.
     pub fn encoders(&'a self) -> Encoders<'a> {
         let guard = self.encoders.lock().unwrap();
         let iter = guard.clone().into_iter();
         Encoders::new(self, iter)
     }
 
+    /// Return an iterator over the list of display controllers.
     pub fn controllers(&'a self) -> DisplayControllers<'a> {
         let guard = self.controllers.lock().unwrap();
         let iter = guard.clone().into_iter();
         DisplayControllers::new(self, iter)
     }
 
+    /// Attempt to load a `Connector` with the given `ConnectorId`.
+    ///
+    /// # Errors
+    ///
+    /// `Error::NotAvailable` - Returned if ownership of the resource has
+    /// already been taken.
     pub fn connector(&'a self, id: ConnectorId) -> Result<Connector<'a>> {
         let pos = {
             let guard = self.connectors.lock().unwrap();
@@ -202,6 +236,12 @@ impl<'a> MasterDevice<'a> {
         Ok(connector)
     }
 
+    /// Attempt to load a `Encoder` with the given `EncoderId`.
+    ///
+    /// # Errors
+    ///
+    /// `Error::NotAvailable` - Returned if ownership of the resource has
+    /// already been taken.
     pub fn encoder(&'a self, id: EncoderId) -> Result<Encoder<'a>> {
         let pos = {
             let guard = self.encoders.lock().unwrap();
@@ -234,6 +274,12 @@ impl<'a> MasterDevice<'a> {
         Ok(encoder)
     }
 
+    /// Attempt to load a `DisplayController` with the given `ControllerId`.
+    ///
+    /// # Errors
+    ///
+    /// `Error::NotAvailable` - Returned if ownership of the resource has
+    /// already been taken.
     pub fn controller(&'a self, id: ControllerId) -> Result<DisplayController<'a>> {
         let pos = {
             let guard = self.controllers.lock().unwrap();
@@ -258,6 +304,7 @@ impl<'a> MasterDevice<'a> {
 
         Ok(controller)
     }
+
     fn unload_connector(&'a self, id: ConnectorId) {
         let mut guard = self.connectors.lock().unwrap();
         guard.push(id);
@@ -274,6 +321,9 @@ impl<'a> MasterDevice<'a> {
     }
 }
 
+/// A framebuffer is a virtual object that is implemented by the graphics
+/// driver. It can be created from any object that implements the `Buffer`
+/// trait.
 pub struct Framebuffer<'a> {
     device: &'a AsRawFd,
     id: FramebufferId
@@ -285,14 +335,26 @@ impl<'a> Drop for Framebuffer<'a> {
     }
 }
 
+/// An object that implements the `Buffer` trait allows it to be used as a part
+/// of a `Framebuffer`.
 pub trait Buffer {
+    /// The width and height of the buffer.
     fn size(&self) -> (u32, u32);
+    /// The depth size of the buffer.
     fn depth(&self) -> u8;
+    /// The number of 'bits per pixel'
     fn bpp(&self) -> u8;
+    /// The pitch of the buffer.
     fn pitch(&self) -> u32;
+    /// A handle provided by your graphics driver that can be used to reference
+    /// the buffer, such as a dumb buffer handle or a handle provided by mesa's
+    /// libgbm.
     fn handle(&self) -> u32;
 }
 
+/// A `DumbBuffer` is a simple buffer type provided by all major graphics
+/// drivers. It can be mapped to main memory and provided direct access to the
+/// pixel data to be displayed.
 pub struct DumbBuffer<'a> {
     device: &'a AsRawFd,
     size: (u32, u32),
@@ -304,6 +366,8 @@ pub struct DumbBuffer<'a> {
 }
 
 impl<'a> DumbBuffer<'a> {
+    /// Attempts to create a `DumbBuffer` from the given size and bits per
+    /// pixel.
     fn create(device: &'a AsRawFd, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
         let raw = try!(ffi::DrmModeCreateDumbBuffer::new(device.as_raw_fd(), width, height, bpp));
         let buffer = DumbBuffer {
@@ -318,6 +382,10 @@ impl<'a> DumbBuffer<'a> {
         Ok(buffer)
     }
 
+    /// Attempts to map the buffer directly into main memory as represented by
+    /// a mutable `&[u8]`. Because this data is copied to the graphics card on
+    /// each write, it is recommended to draw into another buffer of identical
+    /// size and then copy its contents using `copy_from_slice`.
     pub fn map(&self) -> Result<&mut [u8]> {
         let raw = try!(ffi::DrmModeMapDumbBuffer::new(self.device.as_raw_fd(), self.handle));
         let ptr = unsafe {
@@ -343,7 +411,8 @@ impl<'a> Buffer for DumbBuffer<'a> {
     fn handle(&self) -> u32 { self.handle }
 }
 
-#[derive(Debug)]
+/// A `Connector` is a representation of a physical display interface on the
+/// system, such as an HDMI or VGA port.
 pub struct Connector<'a> {
     device: &'a MasterDevice<'a>,
     id: ConnectorId,
@@ -356,14 +425,17 @@ pub struct Connector<'a> {
 }
 
 impl<'a> Connector<'a> {
+    /// Returns the interface type of the connector.
     pub fn interface(&self) -> ConnectorInterface {
         self.interface
     }
 
+    /// Returns the current connection state of the connector.
     pub fn state(&self) -> ConnectorState {
         self.state
     }
 
+    /// Return an iterator over all compatible encoders for this connector.
     pub fn encoders(&self) -> Encoders<'a> {
         Encoders {
             device: self.device,
@@ -371,6 +443,7 @@ impl<'a> Connector<'a> {
         }
     }
 
+    /// Attach an `Encoder` to the `Connector`.
     pub fn attach_encoder(&mut self, encoder: Encoder<'a>) -> Result<()> {
         match self.encoders.iter().any(| &enc | enc == encoder.id) {
             true => {
@@ -381,6 +454,7 @@ impl<'a> Connector<'a> {
         }
     }
 
+    /// Return a list of display modes that this `Connector` can support.
     pub fn modes(&self) -> Vec<Mode> {
         self.modes.clone()
     }
@@ -392,7 +466,7 @@ impl<'a> Drop for Connector<'a> {
     }
 }
 
-#[derive(Clone)]
+/// An iterator over a list of `Connector` objects.
 pub struct Connectors<'a> {
     device: &'a MasterDevice<'a>,
     connectors: IntoIter<ConnectorId>
@@ -418,6 +492,7 @@ impl<'a> Connectors<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+/// The type of interface a `Connector` is.
 pub enum ConnectorInterface {
     Unknown = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Unknown as isize,
     VGA = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_VGA as isize,
@@ -439,9 +514,14 @@ pub enum ConnectorInterface {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+/// The state of a `Connector`.
 pub enum ConnectorState {
+    /// The `Connector` is plugged in and ready for use.
     Connected = ffi::Connection::FFI_DRM_MODE_CONNECTED as isize,
+    /// The `Connector` is unplugged.
     Disconnected = ffi::Connection::FFI_DRM_MODE_DISCONNECTED as isize,
+    /// Sometimes a `Connector` will have an unkown state. It is safe to use,
+    /// but may not provide the expected functionality.
     Unknown = ffi::Connection::FFI_DRM_MODE_UNKNOWN as isize
 }
 
@@ -457,7 +537,10 @@ impl From<u32> for ConnectorState {
     }
 }
 
-#[derive(Debug)]
+/// An `Encoder` is responsibly for converting the pixel data into a format
+/// that the `Connector` can use. Each `Encoder` can only be attached to one
+/// `Connector` at a time, and not all `Encoder` objects are compatible with
+/// all `Connector` objects.
 pub struct Encoder<'a> {
     device: &'a MasterDevice<'a>,
     id: EncoderId,
@@ -470,7 +553,7 @@ impl<'a> Drop for Encoder<'a> {
     }
 }
 
-#[derive(Clone)]
+/// An iterator over a list of `Encoder` objects.
 pub struct Encoders<'a> {
     device: &'a MasterDevice<'a>,
     encoders: IntoIter<EncoderId>
@@ -504,6 +587,8 @@ impl<'a> Encoders<'a> {
     }
 }
 
+/// A `DisplayController` controls the timing and scanout of a `Framebuffer` to
+/// one or more `Connector` objects.
 pub struct DisplayController<'a> {
     device: &'a MasterDevice<'a>,
     id: ControllerId,
@@ -512,12 +597,13 @@ pub struct DisplayController<'a> {
 }
 
 impl<'a> DisplayController<'a> {
+    /// Sets the controller. Unstable.
     pub fn set_controller(&mut self, fb: &'a Framebuffer<'a>, connectors: Vec<Connector<'a>>, mode: Mode) {
         self.framebuffer = Some(fb);
         self.connectors = connectors;
 
         let connector_ids: Vec<u32> = self.connectors.iter().map(| con | con.id).collect();
-        ffi::DrmModeSetCrtc::new(self.device.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.into());
+        ffi::DrmModeSetCrtc::new(self.device.handle, self.id, fb.id, 0, 0, connector_ids, mode.into());
     }
 }
 
@@ -527,7 +613,7 @@ impl<'a> Drop for DisplayController<'a> {
     }
 }
 
-#[derive(Clone)]
+/// An iterator over a list of `DisplayController` objects.
 pub struct DisplayControllers<'a> {
     device: &'a MasterDevice<'a>,
     controllers: IntoIter<ControllerId>
