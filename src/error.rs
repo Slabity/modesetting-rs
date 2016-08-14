@@ -10,7 +10,8 @@ use std::convert::From;
 pub enum Error {
     Io(IoError),
     Ioctl(Errno),
-    NotAvailable
+    NotAvailable,
+    Incompatible
 }
 
 pub type Result<T> = StdResult<T, Error>;
