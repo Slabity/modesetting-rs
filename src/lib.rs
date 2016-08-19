@@ -112,15 +112,15 @@ impl UnprivilegedDevice {
     }
 
     /// Acquire the master lock and provide a MasterDevice
-    pub fn master_lock(&self) -> Result<MasterDevice> {
-        Ok(MasterDevice::from_device(self))
+    pub fn master_lock(&self) -> Result<MasterDevice<Self>> {
+        Ok(MasterDevice::create(self))
     }
 }
 
 impl Device for UnprivilegedDevice { }
 
 /// A `MasterDevice` is an privileged handle to the character device file that
-/// provides modesetting capabilities.
+/// provides full modesetting capabilities.
 ///
 /// Unlike a `Device`, a `MasterDevice` does not own the file descriptor used.
 /// It is the responsibility of the program to open and close the file
@@ -128,45 +128,24 @@ impl Device for UnprivilegedDevice { }
 ///
 /// A `MasterDevice` can be used to access various modesetting resources. It
 /// also prevents dual ownership of any single resource in multiple locations.
-pub struct MasterDevice<'a> {
-    handle: RawFd,
+pub struct MasterDevice<'a, T: AsRawFd> {
+    handle: &'a T,
     connectors: Mutex<Vec<ConnectorId>>,
     encoders: Mutex<Vec<EncoderId>>,
     controllers: Mutex<Vec<ControllerId>>,
     controllers_order: Vec<ControllerId>,
-    device: PhantomData<&'a UnprivilegedDevice>
 }
 
-impl<'a> FromRawFd for MasterDevice<'a> {
-    /// Create a `MasterDevice` from an already opened file descriptor.
-    ///
-    /// # Safety
-    ///
-    /// The `MasterDevice` does not assume ownership of the file descriptor.
-    /// Closing the file descriptor while the `MasterDevice` is in scope may lead
-    /// to panics and errors.
-    ///
-    /// It is assumed that the provided file descriptor has both read and write
-    /// options enabled.
-    unsafe fn from_raw_fd(fd: RawFd) -> MasterDevice<'a> {
+impl<'a, T: AsRawFd> MasterDevice<'a, T> {
+    fn create(handle: &'a T) -> Result<Self> {
+        let fd = handle.as_raw_fd();
         let raw = ffi::DrmModeCardRes::new(fd).unwrap();
         MasterDevice {
-            handle: fd,
+            handle: handle,
             connectors: Mutex::new(raw.connectors.clone()),
             encoders: Mutex::new(raw.encoders.clone()),
             controllers: Mutex::new(raw.crtcs.clone()),
             controllers_order: raw.crtcs.clone(),
-            device: PhantomData
-        }
-    }
-}
-
-impl<'a> MasterDevice<'a> {
-    /// Create a `MasterDevice` from a `Device`. The newly created
-    /// `MasterDevice` will not outlive the `Device` it is created from.
-    fn from_device(device: &'a UnprivilegedDevice) -> MasterDevice<'a> {
-        unsafe {
-            Self::from_raw_fd(device.as_raw_fd())
         }
     }
 
@@ -311,7 +290,7 @@ impl<'a> MasterDevice<'a> {
     }
 }
 
-impl<'a> Device for MasterDevice<'a> { }
+impl<'a, T: AsRawFd> Device for MasterDevice<'a, T> { }
 
 /// A framebuffer is a virtual object that is implemented by the graphics
 /// driver. It can be created from any object that implements the `Buffer`
