@@ -54,56 +54,45 @@ pub type FramebufferId = ResourceId;
 /// A `Device` is an unprivileged handle to the character device file that
 /// provides modesetting capabilities.
 pub struct Device {
-    file: File
+    file: File,
+    master: Mutex<()>
 }
 
-/// Retrieve the raw file descriptor of the character device.
 impl AsRawFd for Device {
     fn as_raw_fd(&self) -> RawFd {
         self.file.as_raw_fd()
     }
 }
 
-/// Create a `Device` from an already opened file descriptor.
-///
-/// # Safety
-///
-/// The newly created `Device` assumes it is the sole owner of the file
-/// descriptor. Closing the file descriptor elsewhere will lead to a panic.
-///
-/// It is assumed that the provided file descriptor has both read and write
-/// options enabled.
 impl FromRawFd for Device {
     unsafe fn from_raw_fd(fd: RawFd) -> Device {
         Device {
-            file: File::from_raw_fd(fd)
+            file: File::from_raw_fd(fd),
+            master: Mutex::new(())
         }
     }
 }
 
-/// Consumes ownership of the `Device` and returns a raw file descriptor.
 impl IntoRawFd for Device {
     fn into_raw_fd(self) -> RawFd {
         self.file.into_raw_fd()
     }
 }
 
-/// Take an already opened `File` and treat it as a `Device`
 impl From<File> for Device {
     fn from(file: File) -> Device {
         Device {
-            file: file
+            file: file,
+            master: Mutex::new(())
         }
     }
 }
 
 impl Device {
     /// Attempt to open the file specified at the given path.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Device> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
-        let dev = Device {
-            file: file,
-        };
+        let dev = Self::from(file);
         Ok(dev)
     }
 
@@ -114,18 +103,8 @@ impl Device {
 
     /// Attempt to create an abstract `Framebuffer` object from the provided
     /// `Buffer`.
-    pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer> {
-        let (width, height) = buffer.size();
-        let depth = buffer.depth();
-        let bpp = buffer.bpp();
-        let pitch = buffer.pitch();
-        let handle = buffer.handle();
-        let raw = try!(ffi::DrmModeAddFb::new(self.file.as_raw_fd(), width, height, depth, bpp, pitch, handle));
-        let fb = Framebuffer {
-            device: self,
-            id: raw.raw.fb_id
-        };
-        Ok(fb)
+    pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer<Self>> {
+        Framebuffer::create(self, buffer);
     }
 
     /// Acquire the master lock and provide a MasterDevice
@@ -329,12 +308,29 @@ impl<'a> MasterDevice<'a> {
 /// A framebuffer is a virtual object that is implemented by the graphics
 /// driver. It can be created from any object that implements the `Buffer`
 /// trait.
-pub struct Framebuffer<'a> {
-    device: &'a AsRawFd,
+pub struct Framebuffer<'a, T: AsRawFd> {
+    device: &'a T,
     id: FramebufferId
 }
 
-impl<'a> Drop for Framebuffer<'a> {
+impl<'a, T: AsRawFd> Framebuffer<'a, T> {
+    fn create(device: &'a T, buffer: &Buffer) -> Result<Self> {
+        let (width, height) = buffer.size();
+        let depth = buffer.depth();
+        let bpp = buffer.bpp();
+        let pitch = buffer.pitch();
+        let handle = buffer.handle();
+        let fd = device.as_raw_fd();
+        let raw = try!(ffi::DrmModeAddFb::new(fd, width, height, depth, bpp, pitch, handle));
+        let fb = Framebuffer {
+            device: device,
+            id: raw.raw.fb_id
+        };
+        Ok(fb)
+    }
+}
+
+impl<'a, T: AsRawFd> Drop for Framebuffer<'a, T> {
     fn drop(&mut self) {
         // TODO: Remove FB from device here.
     }
