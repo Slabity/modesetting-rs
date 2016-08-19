@@ -8,7 +8,7 @@
   accessed by opening a character block device and controlling it through
   various ioctls provided by your graphics driver.
 
-  Modesetting consists of opening a Device and using four types of resources:
+  Modesetting consists of opening a UnprivilegedDevice and using four types of resources:
 
   - Connectors: The physical interfaces on your GPU, such as HDMI, VGA, and
   LVDS ports.
@@ -51,44 +51,59 @@ pub type EncoderId = ResourceId;
 pub type ControllerId = ResourceId;
 pub type FramebufferId = ResourceId;
 
+/// An object that implements the `Device` trait allows it to perform various
+/// operations that any unprivileged modesetting device has available.
+pub trait Device {
+    /// Attempt to create a `DumbBuffer` object for this device.
+    fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
+        DumbBuffer::create(self, width, height, bpp)
+    }
+
+    /// Attempt to create an abstract `Framebuffer` object from the provided
+    /// `Buffer`.
+    fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer<Self>> {
+        Framebuffer::create(self, buffer);
+    }
+}
+
 /// A `Device` is an unprivileged handle to the character device file that
 /// provides modesetting capabilities.
-pub struct Device {
+pub struct UnprivilegedDevice {
     file: File,
     master: Mutex<()>
 }
 
-impl AsRawFd for Device {
+impl AsRawFd for UnprivilegedDevice {
     fn as_raw_fd(&self) -> RawFd {
         self.file.as_raw_fd()
     }
 }
 
-impl FromRawFd for Device {
-    unsafe fn from_raw_fd(fd: RawFd) -> Device {
-        Device {
+impl FromRawFd for UnprivilegedDevice {
+    unsafe fn from_raw_fd(fd: RawFd) -> UnprivilegedDevice {
+        UnprivilegedDevice {
             file: File::from_raw_fd(fd),
             master: Mutex::new(())
         }
     }
 }
 
-impl IntoRawFd for Device {
+impl IntoRawFd for UnprivilegedDevice {
     fn into_raw_fd(self) -> RawFd {
         self.file.into_raw_fd()
     }
 }
 
-impl From<File> for Device {
-    fn from(file: File) -> Device {
-        Device {
+impl From<File> for UnprivilegedDevice {
+    fn from(file: File) -> UnprivilegedDevice {
+        UnprivilegedDevice {
             file: file,
             master: Mutex::new(())
         }
     }
 }
 
-impl Device {
+impl UnprivilegedDevice {
     /// Attempt to open the file specified at the given path.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
@@ -96,22 +111,13 @@ impl Device {
         Ok(dev)
     }
 
-    /// Attempt to create a `DumbBuffer` object for this device.
-    pub fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
-        DumbBuffer::create(self, width, height, bpp)
-    }
-
-    /// Attempt to create an abstract `Framebuffer` object from the provided
-    /// `Buffer`.
-    pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer<Self>> {
-        Framebuffer::create(self, buffer);
-    }
-
     /// Acquire the master lock and provide a MasterDevice
     pub fn master_lock(&self) -> Result<MasterDevice> {
         Ok(MasterDevice::from_device(self))
     }
 }
+
+impl Device for UnprivilegedDevice { }
 
 /// A `MasterDevice` is an privileged handle to the character device file that
 /// provides modesetting capabilities.
@@ -128,7 +134,7 @@ pub struct MasterDevice<'a> {
     encoders: Mutex<Vec<EncoderId>>,
     controllers: Mutex<Vec<ControllerId>>,
     controllers_order: Vec<ControllerId>,
-    device: PhantomData<&'a Device>
+    device: PhantomData<&'a UnprivilegedDevice>
 }
 
 impl<'a> FromRawFd for MasterDevice<'a> {
@@ -158,7 +164,7 @@ impl<'a> FromRawFd for MasterDevice<'a> {
 impl<'a> MasterDevice<'a> {
     /// Create a `MasterDevice` from a `Device`. The newly created
     /// `MasterDevice` will not outlive the `Device` it is created from.
-    fn from_device(device: &'a Device) -> MasterDevice<'a> {
+    fn from_device(device: &'a UnprivilegedDevice) -> MasterDevice<'a> {
         unsafe {
             Self::from_raw_fd(device.as_raw_fd())
         }
@@ -304,6 +310,8 @@ impl<'a> MasterDevice<'a> {
         guard.push(id);
     }
 }
+
+impl<'a> Device for MasterDevice<'a> { }
 
 /// A framebuffer is a virtual object that is implemented by the graphics
 /// driver. It can be created from any object that implements the `Buffer`
