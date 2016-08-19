@@ -53,7 +53,7 @@ pub type FramebufferId = ResourceId;
 
 /// An object that implements the `Device` trait allows it to perform various
 /// operations that any unprivileged modesetting device has available.
-pub trait Device {
+pub trait Device : AsRawFd {
     /// Attempt to create a `DumbBuffer` object for this device.
     fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
         DumbBuffer::create(self, width, height, bpp)
