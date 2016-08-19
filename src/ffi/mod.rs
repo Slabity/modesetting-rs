@@ -182,6 +182,18 @@ impl DrmModeAddFb {
 }
 
 #[derive(Debug)]
+pub struct DrmModeRmFb;
+
+impl DrmModeRmFb {
+    pub fn new(fd: RawFd, id: u32) -> Result<DrmModeRmFb> {
+        let mut raw = id;
+        ioctl!(fd, FFI_DRM_IOCTL_MODE_RMFB, &raw);
+        let fb = DrmModeRmFb;
+        Ok(fb)
+    }
+}
+
+#[derive(Debug)]
 pub struct DrmModeCreateDumbBuffer {
     pub raw: drm_mode_create_dumb
 }
@@ -226,4 +238,14 @@ impl DrmModeDestroyDumbBuffer {
         let destroy = DrmModeDestroyDumbBuffer { raw: raw };
         Ok(destroy)
     }
+}
+
+#[derive(Debug)]
+pub struct DrmEvent {
+    pub raw: drm_event
+}
+
+#[derive(Debug)]
+pub struct DrmEventVBlank {
+    pub raw: drm_event_vblank
 }

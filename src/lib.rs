@@ -36,6 +36,7 @@ use error::{Result, Error};
 use mode::Mode;
 
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
+use std::io::Read;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::sync::Mutex;
@@ -57,6 +58,22 @@ pub trait Device : AsRawFd + Sized {
     /// Attempt to create a `DumbBuffer` object for this device.
     fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer<Self>> {
         DumbBuffer::create(self, width, height, bpp)
+    }
+
+    fn get_event(&self) {
+        unsafe {
+            let mut header_buffer = vec![0u8; std::mem::size_of::<ffi::DrmEvent>()];
+            let mut file = File::from_raw_fd(self.as_raw_fd());
+
+            println!("Before: {:?}", header_buffer);
+
+            file.read_exact(&mut header_buffer).unwrap();
+
+            println!("After: {:?}", header_buffer);
+
+
+            file.into_raw_fd();
+        }
     }
 }
 
@@ -203,7 +220,6 @@ impl<'a, T: 'a + AsRawFd> MasterDevice<'a, T> {
             id: raw.raw.connector_id,
             interface: ConnectorInterface::from(raw.raw.connector_type),
             state: ConnectorState::from(raw.raw.connection),
-            curr_encoder: None,
             encoders: raw.encoders.clone(),
             modes: raw.modes.iter().map(| raw | Mode::from(*raw)).collect(),
             size: (raw.raw.mm_width, raw.raw.mm_height)
@@ -326,7 +342,7 @@ impl<'a, T: 'a + AsRawFd> Framebuffer<'a, T> {
 
 impl<'a, T: 'a + AsRawFd> Drop for Framebuffer<'a, T> {
     fn drop(&mut self) {
-        // TODO: Remove FB from device here.
+        let _ = ffi::DrmModeRmFb::new(self.device.as_raw_fd(), self.id);
     }
 }
 
@@ -413,7 +429,6 @@ pub struct Connector<'a, T: 'a + AsRawFd> {
     id: ConnectorId,
     interface: ConnectorInterface,
     state: ConnectorState,
-    curr_encoder: Option<Encoder<'a, T>>,
     encoders: Vec<EncoderId>,
     modes: Vec<Mode>,
     size: (u32, u32)
@@ -439,12 +454,13 @@ impl<'a, T: 'a + AsRawFd> Connector<'a, T> {
     }
 
     /// Attach an `Encoder` to the `Connector`.
-    pub fn attach_encoder(&mut self, encoder: Encoder<'a, T>) -> Result<()> {
+    pub fn attach_encoder(self, encoder: Encoder<'a, T>) -> Result<EncodedConnector<'a, T>> {
         match self.encoders.iter().any(| &enc | enc == encoder.id) {
-            true => {
-                self.curr_encoder = Some(encoder);
-                Ok(())
-            },
+            true => Ok(
+                EncodedConnector {
+                    connector: self,
+                    encoder: encoder
+                }),
             false => Err(Error::Incompatible)
         }
     }
@@ -458,6 +474,39 @@ impl<'a, T: 'a + AsRawFd> Connector<'a, T> {
 impl<'a, T: 'a + AsRawFd> Drop for Connector<'a, T> {
     fn drop(&mut self) {
         self.device.unload_connector(self.id);
+    }
+}
+
+/// An 'EncodedConnector' is a `Connector` with an `Encoder` attached.
+pub struct EncodedConnector<'a, T: 'a + AsRawFd> {
+    connector: Connector<'a, T>,
+    encoder: Encoder<'a, T>
+}
+
+impl<'a, T: 'a + AsRawFd> EncodedConnector<'a, T> {
+    /// Returns the interface type of the connector.
+    pub fn interface(&self) -> ConnectorInterface {
+        self.connector.interface()
+    }
+
+    /// Returns the current connection state of the connector.
+    pub fn state(&self) -> ConnectorState {
+        self.connector.state()
+    }
+
+    /// Return an iterator over all compatible encoders for this connector.
+    pub fn encoders(&self) -> Encoders<'a, T> {
+        self.connector.encoders()
+    }
+
+    /// Separate the `Connector` and the attached `Encoder`
+    pub fn detach_encoder(self, encoder: Encoder<'a, T>) -> (Connector<'a, T>, Encoder<'a, T>) {
+        (self.connector, self.encoder)
+    }
+
+    /// Return a list of display modes that this `Connector` can support.
+    pub fn modes(&self) -> Vec<Mode> {
+        self.connector.modes()
     }
 }
 
@@ -587,17 +636,17 @@ impl<'a, T: 'a + AsRawFd> Encoders<'a, T> {
 pub struct DisplayController<'a, T: 'a + AsRawFd> {
     device: &'a MasterDevice<'a, T>,
     id: ControllerId,
-    connectors: Vec<Connector<'a, T>>,
+    connectors: Vec<EncodedConnector<'a, T>>,
     framebuffer: Option<&'a Framebuffer<'a, T>>
 }
 
 impl<'a, T: 'a + AsRawFd> DisplayController<'a, T> {
     /// Sets the controller. Unstable.
-    pub fn set_controller(&mut self, fb: &'a Framebuffer<'a, T>, connectors: Vec<Connector<'a, T>>, mode: Mode) {
+    pub fn set_controller(&mut self, fb: &'a Framebuffer<'a, T>, connectors: Vec<EncodedConnector<'a, T>>, mode: Mode) {
         self.framebuffer = Some(fb);
         self.connectors = connectors;
 
-        let connector_ids: Vec<u32> = self.connectors.iter().map(| con | con.id).collect();
+        let connector_ids: Vec<u32> = self.connectors.iter().map(| con | con.connector.id).collect();
         ffi::DrmModeSetCrtc::new(self.device.handle.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.into());
     }
 }
