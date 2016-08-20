@@ -187,7 +187,7 @@ impl<'a> MasterDevice<'a> {
 
     /// Attempt to create an abstract `Framebuffer` object from the provided
     /// `Buffer`.
-    pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer> {
+    pub fn framebuffer<T: Buffer>(&self, buffer: &T) -> Result<Framebuffer> {
         Framebuffer::create(self, buffer)
     }
 
@@ -342,7 +342,7 @@ pub struct Framebuffer<'a> {
 }
 
 impl<'a> Framebuffer<'a> {
-    fn create(device: &'a MasterDevice<'a>, buffer: &Buffer) -> Result<Self> {
+    fn create<T: Buffer>(device: &'a MasterDevice<'a>, buffer: &T) -> Result<Self> {
         let (width, height) = buffer.size();
         let depth = buffer.depth();
         let bpp = buffer.bpp();
