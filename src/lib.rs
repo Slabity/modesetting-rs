@@ -158,6 +158,7 @@ impl Device for UnprivilegedDevice { }
 /// also prevents dual ownership of any single resource in multiple locations.
 pub struct MasterDevice<'a> {
     handle: &'a File,
+    guard: MutexGuard<'a, ()>,
     connectors: Mutex<Vec<ConnectorId>>,
     encoders: Mutex<Vec<EncoderId>>,
     controllers: Mutex<Vec<ControllerId>>,
@@ -171,12 +172,13 @@ impl<'a> AsRawFd for MasterDevice<'a> {
 }
 
 impl<'a> MasterDevice<'a> {
-    fn create<F: AsRef<File>>(handle: &'a F) -> Result<Self> {
-        let file = handle.as_ref();
+    fn create<T: MasterGuard<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
+        let file = device.as_ref();
         let fd = file.as_raw_fd();
         let raw = try!(ffi::DrmModeCardRes::new(fd));
         let dev = MasterDevice {
             handle: file,
+            guard: device.lock_master(),
             connectors: Mutex::new(raw.connectors.clone()),
             encoders: Mutex::new(raw.encoders.clone()),
             controllers: Mutex::new(raw.crtcs.clone()),
