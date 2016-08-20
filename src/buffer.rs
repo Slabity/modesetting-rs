@@ -84,4 +84,29 @@ impl<'a> Buffer for DumbBuffer<'a> {
     fn handle(&self) -> u32 { self.handle }
 }
 
+pub struct GbmDevice<'a> {
+    file: &'a File,
+    device: *mut ffi::gbm_device
+}
 
+impl<'a> GbmDevice<'a> {
+    pub fn from_device<T: AsRef<File>>(device: &'a T) -> Result<Self> {
+        let file = device.as_ref();
+        let dev = GbmDevice {
+            file: file,
+            device: unsafe {
+                ffi::gbm_create_device(file.as_raw_fd())
+            }
+        };
+
+        Ok(dev)
+    }
+}
+
+impl<'a> Drop for GbmDevice<'a> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::gbm_device_destroy(self.device);
+        }
+    }
+}
