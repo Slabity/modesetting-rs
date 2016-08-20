@@ -65,7 +65,7 @@ pub trait MasterLock<'a, T> {
 /// operations that any unprivileged modesetting device has available.
 pub trait Device : AsRef<File> + Sized {
     /// Attempt to create a `DumbBuffer` object for this device.
-    fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer<Self>> {
+    fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
         DumbBuffer::create(self, width, height, bpp)
     }
 
@@ -345,7 +345,7 @@ impl<'a> Framebuffer<'a> {
 
 impl<'a> Drop for Framebuffer<'a> {
     fn drop(&mut self) {
-        let _ = ffi::DrmModeRmFb::new(self.device.handle.as_raw_fd(), self.id);
+        ffi::DrmModeRmFb::new(self.device.handle.as_raw_fd(), self.id).unwrap();
     }
 }
 
@@ -369,8 +369,8 @@ pub trait Buffer {
 /// A `DumbBuffer` is a simple buffer type provided by all major graphics
 /// drivers. It can be mapped to main memory and provided direct access to the
 /// pixel data to be displayed.
-pub struct DumbBuffer<'a, T: 'a + Device> {
-    device: &'a T,
+pub struct DumbBuffer<'a> {
+    device: &'a File,
     size: (u32, u32),
     depth: u8,
     bpp: u8,
@@ -379,13 +379,13 @@ pub struct DumbBuffer<'a, T: 'a + Device> {
     raw_size: usize
 }
 
-impl<'a, T: 'a + Device> DumbBuffer<'a, T> {
+impl<'a> DumbBuffer<'a> {
     /// Attempts to create a `DumbBuffer` from the given size and bits per
     /// pixel.
-    fn create(device: &'a T, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer<T>> {
+    fn create<T: 'a + AsRef<File>>(device: &'a T, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
         let raw = try!(ffi::DrmModeCreateDumbBuffer::new(device.as_ref().as_raw_fd(), width, height, bpp));
         let buffer = DumbBuffer {
-            device: device,
+            device: device.as_ref(),
             size: (width, height),
             depth: 24,
             bpp: bpp,
@@ -401,9 +401,9 @@ impl<'a, T: 'a + Device> DumbBuffer<'a, T> {
     /// each write, it is recommended to draw into another buffer of identical
     /// size and then copy its contents using `copy_from_slice`.
     pub fn map(&self) -> Result<&mut [u8]> {
-        let raw = try!(ffi::DrmModeMapDumbBuffer::new(self.device.as_ref().as_raw_fd(), self.handle));
+        let raw = try!(ffi::DrmModeMapDumbBuffer::new(self.device.as_raw_fd(), self.handle));
         let ptr = unsafe {
-            mmap(std::ptr::null_mut(), self.raw_size, PROT_READ | PROT_WRITE, MAP_SHARED, self.device.as_ref().as_raw_fd(), raw.raw.offset as i64)
+            mmap(std::ptr::null_mut(), self.raw_size, PROT_READ | PROT_WRITE, MAP_SHARED, self.device.as_raw_fd(), raw.raw.offset as i64)
         } as *mut u8;
         Ok(unsafe {
             std::slice::from_raw_parts_mut(ptr, self.raw_size)
@@ -411,13 +411,13 @@ impl<'a, T: 'a + Device> DumbBuffer<'a, T> {
     }
 }
 
-impl<'a, T: Device> Drop for DumbBuffer<'a, T> {
+impl<'a> Drop for DumbBuffer<'a> {
     fn drop(&mut self) {
-        ffi::DrmModeDestroyDumbBuffer::new(self.device.as_ref().as_raw_fd(), self.handle).unwrap();
+        ffi::DrmModeDestroyDumbBuffer::new(self.device.as_raw_fd(), self.handle).unwrap();
     }
 }
 
-impl<'a, T: Device> Buffer for DumbBuffer<'a, T> {
+impl<'a> Buffer for DumbBuffer<'a> {
     fn size(&self) -> (u32, u32) { self.size }
     fn depth(&self) -> u8 { self.depth }
     fn bpp(&self) -> u8 { self.bpp }
