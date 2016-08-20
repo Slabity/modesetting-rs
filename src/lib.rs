@@ -39,7 +39,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::io::Read;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::marker::PhantomData;
 use std::mem::transmute;
 use std::vec::IntoIter;
@@ -51,6 +51,13 @@ pub type ConnectorId = ResourceId;
 pub type EncoderId = ResourceId;
 pub type ControllerId = ResourceId;
 pub type FramebufferId = ResourceId;
+
+/// An object that implements `MasterGuard` allows itself to acquire and
+/// release the master lock for modesetting actions.
+pub trait MasterGuard<'a, T> {
+    fn lock_master(&'a self) -> T;
+    fn release_master(&'a self, guard: T);
+}
 
 /// An object that implements the `Device` trait allows it to perform various
 /// operations that any unprivileged modesetting device has available.
@@ -81,7 +88,22 @@ pub trait Device : AsRawFd + Sized {
 /// provides modesetting capabilities.
 pub struct UnprivilegedDevice {
     file: File,
-    master: Mutex<()>
+    master_lock: Mutex<()>
+}
+
+impl AsRef<File> for UnprivilegedDevice {
+    fn as_ref(&self) -> &File {
+        &self.file
+    }
+}
+
+impl<'a> MasterGuard<'a, MutexGuard<'a, ()>> for UnprivilegedDevice {
+    fn lock_master(&'a self) -> MutexGuard<'a, ()> {
+        self.master_lock.lock().unwrap()
+    }
+
+    fn release_master(&'a self, guard: MutexGuard<'a, ()>) {
+    }
 }
 
 impl AsRawFd for UnprivilegedDevice {
@@ -94,7 +116,7 @@ impl FromRawFd for UnprivilegedDevice {
     unsafe fn from_raw_fd(fd: RawFd) -> UnprivilegedDevice {
         UnprivilegedDevice {
             file: File::from_raw_fd(fd),
-            master: Mutex::new(())
+            master_lock: Mutex::new(())
         }
     }
 }
@@ -109,7 +131,7 @@ impl From<File> for UnprivilegedDevice {
     fn from(file: File) -> UnprivilegedDevice {
         UnprivilegedDevice {
             file: file,
-            master: Mutex::new(())
+            master_lock: Mutex::new(())
         }
     }
 }
@@ -120,11 +142,6 @@ impl UnprivilegedDevice {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
         let dev = Self::from(file);
         Ok(dev)
-    }
-
-    /// Acquire the master lock and provide a MasterDevice
-    pub fn master_lock(&self) -> Result<MasterDevice<Self>> {
-        MasterDevice::create(self)
     }
 }
 
@@ -139,26 +156,27 @@ impl Device for UnprivilegedDevice { }
 ///
 /// A `MasterDevice` can be used to access various modesetting resources. It
 /// also prevents dual ownership of any single resource in multiple locations.
-pub struct MasterDevice<'a, T: 'a + AsRawFd> {
-    handle: &'a T,
+pub struct MasterDevice<'a> {
+    handle: &'a File,
     connectors: Mutex<Vec<ConnectorId>>,
     encoders: Mutex<Vec<EncoderId>>,
     controllers: Mutex<Vec<ControllerId>>,
     controllers_order: Vec<ControllerId>,
 }
 
-impl<'a, T: 'a + AsRawFd> AsRawFd for MasterDevice<'a, T> {
+impl<'a> AsRawFd for MasterDevice<'a> {
     fn as_raw_fd(&self) -> RawFd {
         self.handle.as_raw_fd()
     }
 }
 
-impl<'a, T: 'a + AsRawFd> MasterDevice<'a, T> {
-    fn create(handle: &'a T) -> Result<Self> {
-        let fd = handle.as_raw_fd();
+impl<'a> MasterDevice<'a> {
+    fn create<F: AsRef<File>>(handle: &'a F) -> Result<Self> {
+        let file = handle.as_ref();
+        let fd = file.as_raw_fd();
         let raw = try!(ffi::DrmModeCardRes::new(fd));
         let dev = MasterDevice {
-            handle: handle,
+            handle: file,
             connectors: Mutex::new(raw.connectors.clone()),
             encoders: Mutex::new(raw.encoders.clone()),
             controllers: Mutex::new(raw.crtcs.clone()),
@@ -169,26 +187,26 @@ impl<'a, T: 'a + AsRawFd> MasterDevice<'a, T> {
 
     /// Attempt to create an abstract `Framebuffer` object from the provided
     /// `Buffer`.
-    pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer<T>> {
-        Framebuffer::create(self.handle, buffer)
+    pub fn framebuffer(&self, buffer: &Buffer) -> Result<Framebuffer> {
+        Framebuffer::create(self, buffer)
     }
 
     /// Return an iterator over the list of connectors.
-    pub fn connectors(&'a self) -> Connectors<'a, T> {
+    pub fn connectors(&'a self) -> Connectors<'a> {
         let guard = self.connectors.lock().unwrap();
         let iter = guard.clone().into_iter();
         Connectors::new(self, iter)
     }
 
     /// Return an iterator over the list of encoders.
-    pub fn encoders(&'a self) -> Encoders<'a, T> {
+    pub fn encoders(&'a self) -> Encoders<'a> {
         let guard = self.encoders.lock().unwrap();
         let iter = guard.clone().into_iter();
         Encoders::new(self, iter)
     }
 
     /// Return an iterator over the list of display controllers.
-    pub fn controllers(&'a self) -> DisplayControllers<'a, T> {
+    pub fn controllers(&'a self) -> DisplayControllers<'a> {
         let guard = self.controllers.lock().unwrap();
         let iter = guard.clone().into_iter();
         DisplayControllers::new(self, iter)
@@ -200,7 +218,7 @@ impl<'a, T: 'a + AsRawFd> MasterDevice<'a, T> {
     ///
     /// `Error::NotAvailable` - Returned if ownership of the resource has
     /// already been taken.
-    pub fn connector(&'a self, id: ConnectorId) -> Result<Connector<'a, T>> {
+    pub fn connector(&'a self, id: ConnectorId) -> Result<Connector<'a>> {
         let pos = {
             let guard = self.connectors.lock().unwrap();
             guard.iter().position(| x | *x == id)
@@ -234,7 +252,7 @@ impl<'a, T: 'a + AsRawFd> MasterDevice<'a, T> {
     ///
     /// `Error::NotAvailable` - Returned if ownership of the resource has
     /// already been taken.
-    pub fn encoder(&'a self, id: EncoderId) -> Result<Encoder<'a, T>> {
+    pub fn encoder(&'a self, id: EncoderId) -> Result<Encoder<'a>> {
         let pos = {
             let guard = self.encoders.lock().unwrap();
             guard.iter().position(| x | *x == id)
@@ -272,7 +290,7 @@ impl<'a, T: 'a + AsRawFd> MasterDevice<'a, T> {
     ///
     /// `Error::NotAvailable` - Returned if ownership of the resource has
     /// already been taken.
-    pub fn controller(&'a self, id: ControllerId) -> Result<DisplayController<'a, T>> {
+    pub fn controller(&'a self, id: ControllerId) -> Result<DisplayController<'a>> {
         let pos = {
             let guard = self.controllers.lock().unwrap();
             guard.iter().position(| x | *x == id)
@@ -313,18 +331,18 @@ impl<'a, T: 'a + AsRawFd> MasterDevice<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> Device for MasterDevice<'a, T> { }
+impl<'a> Device for MasterDevice<'a> { }
 
 /// A framebuffer is a virtual object that is implemented by the graphics
 /// driver. It can be created from any object that implements the `Buffer`
 /// trait.
-pub struct Framebuffer<'a, T: 'a + AsRawFd> {
-    device: &'a T,
+pub struct Framebuffer<'a> {
+    device: &'a MasterDevice<'a>,
     id: FramebufferId
 }
 
-impl<'a, T: 'a + AsRawFd> Framebuffer<'a, T> {
-    fn create(device: &'a T, buffer: &Buffer) -> Result<Self> {
+impl<'a> Framebuffer<'a> {
+    fn create(device: &'a MasterDevice<'a>, buffer: &Buffer) -> Result<Self> {
         let (width, height) = buffer.size();
         let depth = buffer.depth();
         let bpp = buffer.bpp();
@@ -340,7 +358,7 @@ impl<'a, T: 'a + AsRawFd> Framebuffer<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> Drop for Framebuffer<'a, T> {
+impl<'a> Drop for Framebuffer<'a> {
     fn drop(&mut self) {
         let _ = ffi::DrmModeRmFb::new(self.device.as_raw_fd(), self.id);
     }
@@ -424,8 +442,8 @@ impl<'a, T: Device> Buffer for DumbBuffer<'a, T> {
 
 /// A `Connector` is a representation of a physical display interface on the
 /// system, such as an HDMI or VGA port.
-pub struct Connector<'a, T: 'a + AsRawFd> {
-    device: &'a MasterDevice<'a, T>,
+pub struct Connector<'a> {
+    device: &'a MasterDevice<'a>,
     id: ConnectorId,
     interface: ConnectorInterface,
     state: ConnectorState,
@@ -434,7 +452,7 @@ pub struct Connector<'a, T: 'a + AsRawFd> {
     size: (u32, u32)
 }
 
-impl<'a, T: 'a + AsRawFd> Connector<'a, T> {
+impl<'a> Connector<'a> {
     /// Returns the interface type of the connector.
     pub fn interface(&self) -> ConnectorInterface {
         self.interface
@@ -446,7 +464,7 @@ impl<'a, T: 'a + AsRawFd> Connector<'a, T> {
     }
 
     /// Return an iterator over all compatible encoders for this connector.
-    pub fn encoders(&self) -> Encoders<'a, T> {
+    pub fn encoders(&self) -> Encoders<'a> {
         Encoders {
             device: self.device,
             encoders: self.encoders.clone().into_iter()
@@ -454,7 +472,7 @@ impl<'a, T: 'a + AsRawFd> Connector<'a, T> {
     }
 
     /// Attach an `Encoder` to the `Connector`.
-    pub fn attach_encoder(self, encoder: Encoder<'a, T>) -> Result<EncodedConnector<'a, T>> {
+    pub fn attach_encoder(self, encoder: Encoder<'a>) -> Result<EncodedConnector<'a>> {
         match self.encoders.iter().any(| &enc | enc == encoder.id) {
             true => Ok(
                 EncodedConnector {
@@ -471,19 +489,19 @@ impl<'a, T: 'a + AsRawFd> Connector<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> Drop for Connector<'a, T> {
+impl<'a> Drop for Connector<'a> {
     fn drop(&mut self) {
         self.device.unload_connector(self.id);
     }
 }
 
 /// An 'EncodedConnector' is a `Connector` with an `Encoder` attached.
-pub struct EncodedConnector<'a, T: 'a + AsRawFd> {
-    connector: Connector<'a, T>,
-    encoder: Encoder<'a, T>
+pub struct EncodedConnector<'a> {
+    connector: Connector<'a>,
+    encoder: Encoder<'a>
 }
 
-impl<'a, T: 'a + AsRawFd> EncodedConnector<'a, T> {
+impl<'a> EncodedConnector<'a> {
     /// Returns the interface type of the connector.
     pub fn interface(&self) -> ConnectorInterface {
         self.connector.interface()
@@ -495,12 +513,12 @@ impl<'a, T: 'a + AsRawFd> EncodedConnector<'a, T> {
     }
 
     /// Return an iterator over all compatible encoders for this connector.
-    pub fn encoders(&self) -> Encoders<'a, T> {
+    pub fn encoders(&self) -> Encoders<'a> {
         self.connector.encoders()
     }
 
     /// Separate the `Connector` and the attached `Encoder`
-    pub fn detach_encoder(self, encoder: Encoder<'a, T>) -> (Connector<'a, T>, Encoder<'a, T>) {
+    pub fn detach_encoder(self) -> (Connector<'a>, Encoder<'a>) {
         (self.connector, self.encoder)
     }
 
@@ -511,14 +529,14 @@ impl<'a, T: 'a + AsRawFd> EncodedConnector<'a, T> {
 }
 
 /// An iterator over a list of `Connector` objects.
-pub struct Connectors<'a, T: 'a + AsRawFd> {
-    device: &'a MasterDevice<'a, T>,
+pub struct Connectors<'a> {
+    device: &'a MasterDevice<'a>,
     connectors: IntoIter<ConnectorId>
 }
 
-impl<'a, T: 'a + AsRawFd> Iterator for Connectors<'a, T> {
-    type Item = Result<Connector<'a, T>>;
-    fn next(&mut self) -> Option<Result<Connector<'a, T>>> {
+impl<'a> Iterator for Connectors<'a> {
+    type Item = Result<Connector<'a>>;
+    fn next(&mut self) -> Option<Result<Connector<'a>>> {
         match self.connectors.next() {
             Some(id) => Some(self.device.connector(id)),
             None => None
@@ -526,8 +544,8 @@ impl<'a, T: 'a + AsRawFd> Iterator for Connectors<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> Connectors<'a, T> {
-    pub fn new(device: &'a MasterDevice<T>, iter: IntoIter<ConnectorId>) -> Connectors<'a, T> {
+impl<'a> Connectors<'a> {
+    pub fn new(device: &'a MasterDevice, iter: IntoIter<ConnectorId>) -> Connectors<'a> {
         Connectors {
             device: device,
             connectors: iter
@@ -585,26 +603,26 @@ impl From<u32> for ConnectorState {
 /// that the `Connector` can use. Each `Encoder` can only be attached to one
 /// `Connector` at a time, and not all `Encoder` objects are compatible with
 /// all `Connector` objects.
-pub struct Encoder<'a, T: 'a + AsRawFd> {
-    device: &'a MasterDevice<'a, T>,
+pub struct Encoder<'a> {
+    device: &'a MasterDevice<'a>,
     id: EncoderId,
     controllers: Vec<ControllerId>
 }
 
-impl<'a, T: 'a + AsRawFd> Drop for Encoder<'a, T> {
+impl<'a> Drop for Encoder<'a> {
     fn drop(&mut self) {
         self.device.unload_encoder(self.id);
     }
 }
 
 /// An iterator over a list of `Encoder` objects.
-pub struct Encoders<'a, T: 'a + AsRawFd> {
-    device: &'a MasterDevice<'a, T>,
+pub struct Encoders<'a> {
+    device: &'a MasterDevice<'a>,
     encoders: IntoIter<EncoderId>
 }
 
-impl<'a, T: 'a + AsRawFd> Encoder<'a, T> {
-    pub fn controllers(&self) -> DisplayControllers<'a, T> {
+impl<'a> Encoder<'a> {
+    pub fn controllers(&self) -> DisplayControllers<'a> {
         DisplayControllers {
             device: self.device,
             controllers: self.controllers.clone().into_iter()
@@ -612,9 +630,9 @@ impl<'a, T: 'a + AsRawFd> Encoder<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> Iterator for Encoders<'a, T> {
-    type Item = Result<Encoder<'a, T>>;
-    fn next(&mut self) -> Option<Result<Encoder<'a, T>>> {
+impl<'a> Iterator for Encoders<'a> {
+    type Item = Result<Encoder<'a>>;
+    fn next(&mut self) -> Option<Result<Encoder<'a>>> {
         match self.encoders.next() {
             Some(id) => Some(self.device.encoder(id)),
             None => None
@@ -622,8 +640,8 @@ impl<'a, T: 'a + AsRawFd> Iterator for Encoders<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> Encoders<'a, T> {
-    pub fn new(device: &'a MasterDevice<T>, iter: IntoIter<EncoderId>) -> Encoders<'a, T> {
+impl<'a> Encoders<'a> {
+    pub fn new(device: &'a MasterDevice, iter: IntoIter<EncoderId>) -> Encoders<'a> {
         Encoders {
             device: device,
             encoders: iter
@@ -633,16 +651,16 @@ impl<'a, T: 'a + AsRawFd> Encoders<'a, T> {
 
 /// A `DisplayController` controls the timing and scanout of a `Framebuffer` to
 /// one or more `Connector` objects.
-pub struct DisplayController<'a, T: 'a + AsRawFd> {
-    device: &'a MasterDevice<'a, T>,
+pub struct DisplayController<'a> {
+    device: &'a MasterDevice<'a>,
     id: ControllerId,
-    connectors: Vec<EncodedConnector<'a, T>>,
-    framebuffer: Option<&'a Framebuffer<'a, T>>
+    connectors: Vec<EncodedConnector<'a>>,
+    framebuffer: Option<&'a Framebuffer<'a>>
 }
 
-impl<'a, T: 'a + AsRawFd> DisplayController<'a, T> {
+impl<'a> DisplayController<'a> {
     /// Sets the controller. Unstable.
-    pub fn set_controller(&mut self, fb: &'a Framebuffer<'a, T>, connectors: Vec<EncodedConnector<'a, T>>, mode: Mode) {
+    pub fn set_controller(&mut self, fb: &'a Framebuffer<'a>, connectors: Vec<EncodedConnector<'a>>, mode: Mode) {
         self.framebuffer = Some(fb);
         self.connectors = connectors;
 
@@ -651,21 +669,21 @@ impl<'a, T: 'a + AsRawFd> DisplayController<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> Drop for DisplayController<'a, T> {
+impl<'a> Drop for DisplayController<'a> {
     fn drop(&mut self) {
         self.device.unload_controller(self.id);
     }
 }
 
 /// An iterator over a list of `DisplayController` objects.
-pub struct DisplayControllers<'a, T: 'a + AsRawFd> {
-    device: &'a MasterDevice<'a, T>,
+pub struct DisplayControllers<'a> {
+    device: &'a MasterDevice<'a>,
     controllers: IntoIter<ControllerId>
 }
 
-impl<'a, T: 'a + AsRawFd> Iterator for DisplayControllers<'a, T> {
-    type Item = Result<DisplayController<'a, T>>;
-    fn next(&mut self) -> Option<Result<DisplayController<'a, T>>> {
+impl<'a> Iterator for DisplayControllers<'a> {
+    type Item = Result<DisplayController<'a>>;
+    fn next(&mut self) -> Option<Result<DisplayController<'a>>> {
         match self.controllers.next() {
             Some(id) => Some(self.device.controller(id)),
             None => return None
@@ -673,8 +691,8 @@ impl<'a, T: 'a + AsRawFd> Iterator for DisplayControllers<'a, T> {
     }
 }
 
-impl<'a, T: 'a + AsRawFd> DisplayControllers<'a, T> {
-    pub fn new(device: &'a MasterDevice<T>, iter: IntoIter<ControllerId>) -> DisplayControllers<'a, T> {
+impl<'a> DisplayControllers<'a> {
+    pub fn new(device: &'a MasterDevice, iter: IntoIter<ControllerId>) -> DisplayControllers<'a> {
         DisplayControllers {
             device: device,
             controllers: iter
