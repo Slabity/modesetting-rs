@@ -63,25 +63,22 @@ pub trait MasterLock<'a, T> {
 
 /// An object that implements the `Device` trait allows it to perform various
 /// operations that any unprivileged modesetting device has available.
-pub trait Device : AsRawFd + Sized {
+pub trait Device : AsRef<File> + Sized {
     /// Attempt to create a `DumbBuffer` object for this device.
     fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer<Self>> {
         DumbBuffer::create(self, width, height, bpp)
     }
 
-    fn get_event(&self) {
+    fn get_event(&mut self) {
         unsafe {
             let mut header_buffer = vec![0u8; std::mem::size_of::<ffi::DrmEvent>()];
-            let mut file = File::from_raw_fd(self.as_raw_fd());
+            let mut file = self.as_ref();
 
             println!("Before: {:?}", header_buffer);
 
             file.read_exact(&mut header_buffer).unwrap();
 
             println!("After: {:?}", header_buffer);
-
-
-            file.into_raw_fd();
         }
     }
 }
@@ -108,25 +105,6 @@ impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for UnprivilegedDevice {
     }
 }
 
-impl AsRawFd for UnprivilegedDevice {
-    fn as_raw_fd(&self) -> RawFd {
-        self.file.as_raw_fd()
-    }
-}
-
-impl FromRawFd for UnprivilegedDevice {
-    unsafe fn from_raw_fd(fd: RawFd) -> UnprivilegedDevice {
-        let file = File::from_raw_fd(fd);
-        UnprivilegedDevice::from(file)
-    }
-}
-
-impl IntoRawFd for UnprivilegedDevice {
-    fn into_raw_fd(self) -> RawFd {
-        self.file.into_raw_fd()
-    }
-}
-
 impl From<File> for UnprivilegedDevice {
     fn from(file: File) -> UnprivilegedDevice {
         UnprivilegedDevice {
@@ -142,6 +120,11 @@ impl UnprivilegedDevice {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
         let dev = Self::from(file);
         Ok(dev)
+    }
+
+    /// Acquire the master lock and create a `MasterDevice`
+    pub fn master(&self) -> Result<MasterDevice> {
+        MasterDevice::from_device(self)
     }
 }
 
@@ -165,14 +148,14 @@ pub struct MasterDevice<'a> {
     controllers_order: Vec<ControllerId>,
 }
 
-impl<'a> AsRawFd for MasterDevice<'a> {
-    fn as_raw_fd(&self) -> RawFd {
-        self.handle.as_raw_fd()
+impl<'a> AsRef<File> for MasterDevice<'a> {
+    fn as_ref(&self) -> &File {
+        self.handle
     }
 }
 
 impl<'a> MasterDevice<'a> {
-    fn create<T: MasterLock<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
+    fn from_device<T: MasterLock<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
         let file = device.as_ref();
         let fd = file.as_raw_fd();
         let raw = try!(ffi::DrmModeCardRes::new(fd));
@@ -350,7 +333,7 @@ impl<'a> Framebuffer<'a> {
         let bpp = buffer.bpp();
         let pitch = buffer.pitch();
         let handle = buffer.handle();
-        let fd = device.as_raw_fd();
+        let fd = device.handle.as_raw_fd();
         let raw = try!(ffi::DrmModeAddFb::new(fd, width, height, depth, bpp, pitch, handle));
         let fb = Framebuffer {
             device: device,
@@ -362,7 +345,7 @@ impl<'a> Framebuffer<'a> {
 
 impl<'a> Drop for Framebuffer<'a> {
     fn drop(&mut self) {
-        let _ = ffi::DrmModeRmFb::new(self.device.as_raw_fd(), self.id);
+        let _ = ffi::DrmModeRmFb::new(self.device.handle.as_raw_fd(), self.id);
     }
 }
 
@@ -400,7 +383,7 @@ impl<'a, T: 'a + Device> DumbBuffer<'a, T> {
     /// Attempts to create a `DumbBuffer` from the given size and bits per
     /// pixel.
     fn create(device: &'a T, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer<T>> {
-        let raw = try!(ffi::DrmModeCreateDumbBuffer::new(device.as_raw_fd(), width, height, bpp));
+        let raw = try!(ffi::DrmModeCreateDumbBuffer::new(device.as_ref().as_raw_fd(), width, height, bpp));
         let buffer = DumbBuffer {
             device: device,
             size: (width, height),
@@ -418,9 +401,9 @@ impl<'a, T: 'a + Device> DumbBuffer<'a, T> {
     /// each write, it is recommended to draw into another buffer of identical
     /// size and then copy its contents using `copy_from_slice`.
     pub fn map(&self) -> Result<&mut [u8]> {
-        let raw = try!(ffi::DrmModeMapDumbBuffer::new(self.device.as_raw_fd(), self.handle));
+        let raw = try!(ffi::DrmModeMapDumbBuffer::new(self.device.as_ref().as_raw_fd(), self.handle));
         let ptr = unsafe {
-            mmap(std::ptr::null_mut(), self.raw_size, PROT_READ | PROT_WRITE, MAP_SHARED, self.device.as_raw_fd(), raw.raw.offset as i64)
+            mmap(std::ptr::null_mut(), self.raw_size, PROT_READ | PROT_WRITE, MAP_SHARED, self.device.as_ref().as_raw_fd(), raw.raw.offset as i64)
         } as *mut u8;
         Ok(unsafe {
             std::slice::from_raw_parts_mut(ptr, self.raw_size)
@@ -430,7 +413,7 @@ impl<'a, T: 'a + Device> DumbBuffer<'a, T> {
 
 impl<'a, T: Device> Drop for DumbBuffer<'a, T> {
     fn drop(&mut self) {
-        ffi::DrmModeDestroyDumbBuffer::new(self.device.as_raw_fd(), self.handle).unwrap();
+        ffi::DrmModeDestroyDumbBuffer::new(self.device.as_ref().as_raw_fd(), self.handle).unwrap();
     }
 }
 
