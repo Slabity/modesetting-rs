@@ -52,10 +52,12 @@ pub type EncoderId = ResourceId;
 pub type ControllerId = ResourceId;
 pub type FramebufferId = ResourceId;
 
-/// An object that implements `MasterGuard` allows itself to acquire and
+/// An object that implements `MasterLock` allows itself to acquire and
 /// release the master lock for modesetting actions.
-pub trait MasterGuard<'a, T> {
+pub trait MasterLock<'a, T> {
+    /// Acquire the master control lock.
     fn lock_master(&'a self) -> T;
+    /// Release the master control lock.
     fn release_master(&'a self, guard: T);
 }
 
@@ -97,7 +99,7 @@ impl AsRef<File> for UnprivilegedDevice {
     }
 }
 
-impl<'a> MasterGuard<'a, MutexGuard<'a, ()>> for UnprivilegedDevice {
+impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for UnprivilegedDevice {
     fn lock_master(&'a self) -> MutexGuard<'a, ()> {
         self.master_lock.lock().unwrap()
     }
@@ -114,10 +116,8 @@ impl AsRawFd for UnprivilegedDevice {
 
 impl FromRawFd for UnprivilegedDevice {
     unsafe fn from_raw_fd(fd: RawFd) -> UnprivilegedDevice {
-        UnprivilegedDevice {
-            file: File::from_raw_fd(fd),
-            master_lock: Mutex::new(())
-        }
+        let file = File::from_raw_fd(fd);
+        UnprivilegedDevice::from(file)
     }
 }
 
@@ -172,7 +172,7 @@ impl<'a> AsRawFd for MasterDevice<'a> {
 }
 
 impl<'a> MasterDevice<'a> {
-    fn create<T: MasterGuard<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
+    fn create<T: MasterLock<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
         let file = device.as_ref();
         let fd = file.as_raw_fd();
         let raw = try!(ffi::DrmModeCardRes::new(fd));
