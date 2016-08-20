@@ -35,12 +35,11 @@ pub mod mode;
 use error::{Result, Error};
 use mode::Mode;
 
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
+use std::os::unix::io::AsRawFd;
 use std::io::Read;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-use std::marker::PhantomData;
 use std::mem::transmute;
 use std::vec::IntoIter;
 
@@ -70,16 +69,14 @@ pub trait Device : AsRef<File> + Sized {
     }
 
     fn get_event(&mut self) {
-        unsafe {
-            let mut header_buffer = vec![0u8; std::mem::size_of::<ffi::DrmEvent>()];
-            let mut file = self.as_ref();
+        let mut header_buffer = vec![0u8; std::mem::size_of::<ffi::DrmEvent>()];
+        let mut file = self.as_ref();
 
-            println!("Before: {:?}", header_buffer);
+        println!("Before: {:?}", header_buffer);
 
-            file.read_exact(&mut header_buffer).unwrap();
+        file.read_exact(&mut header_buffer).unwrap();
 
-            println!("After: {:?}", header_buffer);
-        }
+        println!("After: {:?}", header_buffer);
     }
 }
 
@@ -471,6 +468,11 @@ impl<'a> Connector<'a> {
     /// Return a list of display modes that this `Connector` can support.
     pub fn modes(&self) -> Vec<Mode> {
         self.modes.clone()
+    }
+
+    /// Return the size of the display in millimeters.
+    pub fn size(&self) -> (u32, u32) {
+        self.size
     }
 }
 
