@@ -4,7 +4,8 @@ pub use self::drm_shim::*;
 use super::error::{Error, Result};
 use errno::errno;
 use std::os::unix::io::RawFd;
-use libc::ioctl;
+use std::ptr::null;
+use libc::{ioctl, c_void};
 
 // This macro simply wraps the ioctl call to return errno on failure
 macro_rules! ioctl {
@@ -13,6 +14,16 @@ macro_rules! ioctl {
             return Err(Error::Ioctl(errno()));
         }
     })
+}
+
+pub fn set_master(fd: RawFd) -> Result<()> {
+    ioctl!(fd, FFI_DRM_IOCTL_SET_MASTER, null() as *const c_void);
+    Ok(())
+}
+
+pub fn drop_master(fd: RawFd) -> Result<()> {
+    ioctl!(fd, FFI_DRM_IOCTL_DROP_MASTER, null() as *const c_void);
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -186,7 +197,7 @@ pub struct DrmModeRmFb;
 
 impl DrmModeRmFb {
     pub fn new(fd: RawFd, id: u32) -> Result<DrmModeRmFb> {
-        let mut raw = id;
+        let raw = id;
         ioctl!(fd, FFI_DRM_IOCTL_MODE_RMFB, &raw);
         let fb = DrmModeRmFb;
         Ok(fb)
@@ -240,12 +251,3 @@ impl DrmModeDestroyDumbBuffer {
     }
 }
 
-#[derive(Debug)]
-pub struct DrmEvent {
-    pub raw: drm_event
-}
-
-#[derive(Debug)]
-pub struct DrmEventVBlank {
-    pub raw: drm_event_vblank
-}
