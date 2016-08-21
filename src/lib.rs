@@ -144,7 +144,7 @@ impl<'a> AsRef<File> for MasterDevice<'a> {
 }
 
 impl<'a> MasterDevice<'a> {
-    fn from_device<T: MasterLock<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
+    pub fn from_device<T: MasterLock<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
         let file = device.as_ref();
         let fd = file.as_raw_fd();
         let raw = try!(ffi::DrmModeCardRes::new(fd));
