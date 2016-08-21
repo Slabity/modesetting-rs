@@ -2,11 +2,12 @@ use super::ffi;
 use super::error::Result;
 
 use std::os::unix::io::AsRawFd;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::ptr::null_mut;
 use std::slice::from_raw_parts_mut;
+use std::marker::PhantomData;
 
-use libc::{mmap, munmap, PROT_READ, PROT_WRITE, MAP_SHARED};
+use libc::{mmap, munmap, c_void, PROT_READ, PROT_WRITE, MAP_SHARED};
 
 /// An object that implements the `Buffer` trait allows it to be used as a part
 /// of a `Framebuffer`.
@@ -59,20 +60,44 @@ impl<'a> DumbBuffer<'a> {
     /// a mutable `&[u8]`. Because this data is copied to the graphics card on
     /// each write, it is recommended to draw into another buffer of identical
     /// size and then copy its contents using `copy_from_slice`.
-    pub fn map(&self) -> Result<&mut [u8]> {
+    pub fn map(&self) -> Result<DumbMapping> {
         let raw = try!(ffi::DrmModeMapDumbBuffer::new(self.device.as_raw_fd(), self.handle));
         let ptr = unsafe {
             mmap(null_mut(), self.raw_size, PROT_READ | PROT_WRITE, MAP_SHARED, self.device.as_raw_fd(), raw.raw.offset as i64)
         } as *mut u8;
-        Ok(unsafe {
+        let map = unsafe {
             from_raw_parts_mut(ptr, self.raw_size)
-        })
+        };
+        let mapping = DumbMapping {
+            buffer: PhantomData,
+            map: map
+        };
+        Ok(mapping)
     }
 }
 
 impl<'a> Drop for DumbBuffer<'a> {
     fn drop(&mut self) {
         ffi::DrmModeDestroyDumbBuffer::new(self.device.as_raw_fd(), self.handle).unwrap();
+    }
+}
+
+/// A `DumbMapping` is the mapping of a `DumbBuffer`. You can read and write
+/// directly into the map and it will be mapped to the `DumbBuffer`. It is
+/// recommended to use `copy_from_slice` to write to the buffer, as this data
+/// is copied to the graphics card on each write.
+pub struct DumbMapping<'a> {
+    pub map: &'a mut [u8],
+    buffer: PhantomData<DumbBuffer<'a>>
+}
+
+impl<'a> Drop for DumbMapping<'a> {
+    fn drop(&mut self) {
+        let addr = self.map.as_mut_ptr();
+        let size = self.map.len();
+        unsafe {
+            munmap(addr as *mut c_void, size);
+        }
     }
 }
 
@@ -84,29 +109,3 @@ impl<'a> Buffer for DumbBuffer<'a> {
     fn handle(&self) -> u32 { self.handle }
 }
 
-pub struct GbmDevice<'a> {
-    file: &'a File,
-    device: *mut ffi::gbm_device
-}
-
-impl<'a> GbmDevice<'a> {
-    pub fn from_device<T: AsRef<File>>(device: &'a T) -> Result<Self> {
-        let file = device.as_ref();
-        let dev = GbmDevice {
-            file: file,
-            device: unsafe {
-                ffi::gbm_create_device(file.as_raw_fd())
-            }
-        };
-
-        Ok(dev)
-    }
-}
-
-impl<'a> Drop for GbmDevice<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            ffi::gbm_device_destroy(self.device);
-        }
-    }
-}

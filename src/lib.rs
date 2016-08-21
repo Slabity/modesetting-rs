@@ -38,7 +38,6 @@ use mode::Mode;
 use buffer::{Buffer, DumbBuffer};
 
 use std::os::unix::io::AsRawFd;
-use std::io::Read;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -55,7 +54,7 @@ pub type FramebufferId = ResourceId;
 /// release the master lock for modesetting actions.
 pub trait MasterLock<'a, T> {
     /// Acquire the master control lock.
-    fn lock_master(&'a self) -> T;
+    fn lock_master(&'a self) -> Result<T>;
     /// Release the master control lock.
     fn release_master(&'a self, guard: T);
 }
@@ -66,17 +65,6 @@ pub trait Device : AsRef<File> + Sized {
     /// Attempt to create a `DumbBuffer` object for this device.
     fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
         DumbBuffer::create(self, width, height, bpp)
-    }
-
-    fn get_event(&mut self) {
-        let mut header_buffer = vec![0u8; std::mem::size_of::<ffi::DrmEvent>()];
-        let mut file = self.as_ref();
-
-        println!("Before: {:?}", header_buffer);
-
-        file.read_exact(&mut header_buffer).unwrap();
-
-        println!("After: {:?}", header_buffer);
     }
 }
 
@@ -94,11 +82,15 @@ impl AsRef<File> for UnprivilegedDevice {
 }
 
 impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for UnprivilegedDevice {
-    fn lock_master(&'a self) -> MutexGuard<'a, ()> {
-        self.master_lock.lock().unwrap()
+    fn lock_master(&'a self) -> Result<MutexGuard<'a, ()>> {
+        let guard = self.master_lock.lock().unwrap();
+        try!(ffi::set_master(self.file.as_raw_fd()));
+        Ok(guard)
     }
 
+    #[allow(unused_variables)]
     fn release_master(&'a self, guard: MutexGuard<'a, ()>) {
+        let _ = ffi::drop_master(self.file.as_raw_fd());
     }
 }
 
@@ -138,7 +130,7 @@ impl Device for UnprivilegedDevice { }
 /// also prevents dual ownership of any single resource in multiple locations.
 pub struct MasterDevice<'a> {
     handle: &'a File,
-    guard: MutexGuard<'a, ()>,
+    _guard: MutexGuard<'a, ()>,
     connectors: Mutex<Vec<ConnectorId>>,
     encoders: Mutex<Vec<EncoderId>>,
     controllers: Mutex<Vec<ControllerId>>,
@@ -158,7 +150,7 @@ impl<'a> MasterDevice<'a> {
         let raw = try!(ffi::DrmModeCardRes::new(fd));
         let dev = MasterDevice {
             handle: file,
-            guard: device.lock_master(),
+            _guard: try!(device.lock_master()),
             connectors: Mutex::new(raw.connectors.clone()),
             encoders: Mutex::new(raw.encoders.clone()),
             controllers: Mutex::new(raw.crtcs.clone()),
@@ -576,7 +568,7 @@ impl<'a> DisplayController<'a> {
         self.connectors = connectors;
 
         let connector_ids: Vec<u32> = self.connectors.iter().map(| con | con.connector.id).collect();
-        ffi::DrmModeSetCrtc::new(self.device.handle.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.into());
+        ffi::DrmModeSetCrtc::new(self.device.handle.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.into()).unwrap();
     }
 }
 
