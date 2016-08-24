@@ -282,8 +282,6 @@ impl<'a> MasterDevice<'a> {
         let controller = DisplayController {
             device: self,
             id: raw.raw.crtc_id,
-            connectors: Vec::new(),
-            framebuffer: None
         };
 
         Ok(controller)
@@ -557,18 +555,20 @@ impl<'a> Encoders<'a> {
 pub struct DisplayController<'a> {
     device: &'a MasterDevice<'a>,
     id: ControllerId,
-    connectors: Vec<EncodedConnector<'a>>,
-    framebuffer: Option<&'a Framebuffer<'a>>
 }
 
-impl<'a> DisplayController<'a> {
+impl<'a, 'b, 'c> DisplayController<'a> {
     /// Sets the controller. Unstable.
-    pub fn set_controller(&mut self, fb: &'a Framebuffer<'a>, connectors: Vec<EncodedConnector<'a>>, mode: Mode) {
-        self.framebuffer = Some(fb);
-        self.connectors = connectors;
+    pub fn set_controller(self, fb: &'b Framebuffer, connectors: &'b [EncodedConnector], mode: Mode) -> ActiveController<'a, 'b, 'b> {
+        let connector_ids: Vec<u32> = connectors.iter().map(| con | con.connector.id).collect();
+        ffi::DrmModeSetCrtc::new(self.device.handle.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.clone().into()).unwrap();
 
-        let connector_ids: Vec<u32> = self.connectors.iter().map(| con | con.connector.id).collect();
-        ffi::DrmModeSetCrtc::new(self.device.handle.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.into()).unwrap();
+        ActiveController {
+            controller: self,
+            connectors: connectors,
+            framebuffer: fb,
+            mode: mode
+        }
     }
 }
 
@@ -576,6 +576,13 @@ impl<'a> Drop for DisplayController<'a> {
     fn drop(&mut self) {
         self.device.unload_controller(self.id);
     }
+}
+
+pub struct ActiveController<'a, 'b, 'c> {
+    controller: DisplayController<'a>,
+    connectors: &'b [EncodedConnector<'b>],
+    framebuffer: &'c Framebuffer<'c>,
+    mode: Mode
 }
 
 /// An iterator over a list of `DisplayController` objects.
