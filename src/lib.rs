@@ -119,6 +119,43 @@ impl UnprivilegedDevice {
 
 impl Device for UnprivilegedDevice { }
 
+/// A `PrivilegedDevice` is identical to an `UnprivilegedDevice`, but does not
+/// set or drop the DRM master. This is useful on platforms where the program
+/// is granted the privileges by another program, such as a display server or a
+/// session manager like logind.
+pub struct PrivilegedDevice<'a> {
+    file: &'a File,
+    master_lock: Mutex<()>
+}
+
+impl<'a> AsRef<File> for PrivilegedDevice<'a> {
+    fn as_ref(&self) -> &File {
+        self.file
+    }
+}
+
+impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for PrivilegedDevice<'a> {
+    fn lock_master(&'a self) -> Result<MutexGuard<'a, ()>> {
+        let guard = self.master_lock.lock().unwrap();
+        Ok(guard)
+    }
+
+    #[allow(unused_variables)]
+    fn release_master(&'a self, guard: MutexGuard<'a, ()>) {
+        // Simply consumes the guard and returns it to its mutex.
+    }
+}
+
+impl<'a> PrivilegedDevice<'a> {
+    /// Create a `PrivilegedDevice` from an opened file.
+    pub fn from_file_ref(file: &'a File) -> PrivilegedDevice<'a> {
+        PrivilegedDevice {
+            file: file,
+            master_lock: Mutex::new(())
+        }
+    }
+}
+
 /// A `MasterDevice` is an privileged handle to the character device file that
 /// provides full modesetting capabilities.
 ///
