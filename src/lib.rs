@@ -43,6 +43,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::mem::transmute;
 use std::vec::IntoIter;
+use std::marker::PhantomData;
 
 pub type ResourceId = u32;
 pub type ConnectorId = ResourceId;
@@ -123,18 +124,18 @@ impl Device for UnprivilegedDevice { }
 /// set or drop the DRM master. This is useful on platforms where the program
 /// is granted the privileges by another program, such as a display server or a
 /// session manager like logind.
-pub struct PrivilegedDevice<'a> {
-    file: &'a File,
-    master_lock: Mutex<()>
+pub struct PrivilegedDevice<F> where F: AsRef<File> {
+    file: F,
+    master_lock: Mutex<()>,
 }
 
-impl<'a> AsRef<File> for PrivilegedDevice<'a> {
+impl<F> AsRef<File> for PrivilegedDevice<F> where F: AsRef<File> {
     fn as_ref(&self) -> &File {
-        self.file
+        self.file.as_ref()
     }
 }
 
-impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for PrivilegedDevice<'a> {
+impl<'a, F> MasterLock<'a, MutexGuard<'a, ()>> for PrivilegedDevice<F> where F: AsRef<File> {
     fn lock_master(&'a self) -> Result<MutexGuard<'a, ()>> {
         let guard = self.master_lock.lock().unwrap();
         Ok(guard)
@@ -146,9 +147,9 @@ impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for PrivilegedDevice<'a> {
     }
 }
 
-impl<'a> PrivilegedDevice<'a> {
+impl<'a, F> PrivilegedDevice<F> where F: AsRef<File> {
     /// Create a `PrivilegedDevice` from an opened file.
-    pub fn from_file_ref(file: &'a File) -> PrivilegedDevice<'a> {
+    pub fn from_file_ref(file: F) -> PrivilegedDevice<F> {
         PrivilegedDevice {
             file: file,
             master_lock: Mutex::new(())
