@@ -456,6 +456,11 @@ impl<'a> EncodedConnector<'a> {
         self.connector.encoders()
     }
 
+    /// Return an iterator over all the compatible controllers for this connector.
+    pub fn controllers(&self) -> DisplayControllers<'a> {
+        self.encoder.controllers()
+    }
+
     /// Separate the `Connector` and the attached `Encoder`
     pub fn detach_encoder(self) -> (Connector<'a>, Encoder<'a>) {
         (self.connector, self.encoder)
@@ -621,6 +626,12 @@ pub struct ActiveController<'a, 'b, 'c> {
     connectors: &'b [EncodedConnector<'b>],
     framebuffer: &'c Framebuffer<'c>,
     mode: Mode
+}
+
+impl<'a, 'b, 'c> ActiveController<'a, 'b, 'c> {
+    pub fn unset_controller(self) -> DisplayController<'a> {
+        self.controller
+    }
 }
 
 /// An iterator over a list of `DisplayController` objects.
