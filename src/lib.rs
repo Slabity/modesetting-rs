@@ -25,6 +25,8 @@
   For more information, see the `drm-kms` man page.
   */
 
+#[macro_use]
+extern crate error_chain;
 extern crate libc;
 extern crate errno;
 
@@ -33,7 +35,7 @@ pub mod error;
 pub mod buffer;
 pub mod mode;
 
-use error::{Result, Error};
+use error::{Result, ErrorKind};
 use mode::Mode;
 use buffer::{Buffer, DumbBuffer};
 
@@ -43,7 +45,6 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::mem::transmute;
 use std::vec::IntoIter;
-use std::marker::PhantomData;
 
 pub type ResourceId = u32;
 pub type ConnectorId = ResourceId;
@@ -240,7 +241,7 @@ impl<'a> MasterDevice<'a> {
                 let mut guard = self.connectors.lock().unwrap();
                 guard.remove(p);
             },
-            None => return Err(Error::NotAvailable)
+            None => return Err(ErrorKind::NotAvailable.into())
         };
 
         let raw = try!(ffi::DrmModeGetConnector::new(self.handle.as_raw_fd(), id));
@@ -274,7 +275,7 @@ impl<'a> MasterDevice<'a> {
                 let mut guard = self.encoders.lock().unwrap();
                 guard.remove(p);
             },
-            None => return Err(Error::NotAvailable)
+            None => return Err(ErrorKind::NotAvailable.into())
         };
 
         let raw = try!(ffi::DrmModeGetEncoder::new(self.handle.as_raw_fd(), id));
@@ -312,7 +313,7 @@ impl<'a> MasterDevice<'a> {
                 let mut guard = self.controllers.lock().unwrap();
                 guard.remove(p);
             },
-            None => return Err(Error::NotAvailable)
+            None => return Err(ErrorKind::NotAvailable.into())
         };
 
         let raw = try!(ffi::DrmModeGetCrtc::new(self.handle.as_raw_fd(), id));
@@ -413,7 +414,7 @@ impl<'a> Connector<'a> {
                     connector: self,
                     encoder: encoder
                 }),
-            false => Err(Error::Incompatible)
+            false => Err(ErrorKind::Incompatible.into())
         }
     }
 

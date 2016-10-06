@@ -1,8 +1,8 @@
 mod drm_shim;
 
 pub use self::drm_shim::*;
-use super::error::{Error, Result};
-use errno::errno;
+use std::io::Error;
+use ::error::Result;
 use std::os::unix::io::RawFd;
 use std::ptr::null;
 use libc::{ioctl, c_void};
@@ -11,7 +11,7 @@ use libc::{ioctl, c_void};
 macro_rules! ioctl {
     ( $fd:expr, $code:expr, $obj:expr ) => ( unsafe {
         if ioctl($fd, $code, $obj) != 0 {
-            return Err(Error::Ioctl(errno()));
+            return Err(Error::last_os_error().into());
         }
     })
 }
