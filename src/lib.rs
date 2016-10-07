@@ -31,11 +31,11 @@ extern crate libc;
 extern crate errno;
 
 mod ffi;
-pub mod error;
+pub mod result;
 pub mod buffer;
 pub mod mode;
 
-use error::{Result, ErrorKind};
+use result::{Result, ErrorKind};
 use mode::Mode;
 use buffer::{Buffer, DumbBuffer};
 
