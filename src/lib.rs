@@ -28,7 +28,6 @@
 #[macro_use]
 extern crate error_chain;
 extern crate libc;
-extern crate errno;
 
 mod ffi;
 pub mod error;
