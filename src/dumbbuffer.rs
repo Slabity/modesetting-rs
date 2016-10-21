@@ -1,5 +1,6 @@
-use super::ffi;
-use super::error::Result;
+use ::ffi;
+use ::Buffer;
+use ::result::Result;
 
 use std::os::unix::io::AsRawFd;
 use std::fs::File;
@@ -8,23 +9,6 @@ use std::slice::from_raw_parts_mut;
 use std::marker::PhantomData;
 
 use libc::{mmap, munmap, c_void, PROT_READ, PROT_WRITE, MAP_SHARED};
-
-/// An object that implements the `Buffer` trait allows it to be used as a part
-/// of a `Framebuffer`.
-pub trait Buffer {
-    /// The width and height of the buffer.
-    fn size(&self) -> (u32, u32);
-    /// The depth size of the buffer.
-    fn depth(&self) -> u8;
-    /// The number of 'bits per pixel'
-    fn bpp(&self) -> u8;
-    /// The pitch of the buffer.
-    fn pitch(&self) -> u32;
-    /// A handle provided by your graphics driver that can be used to reference
-    /// the buffer, such as a dumb buffer handle or a handle provided by mesa's
-    /// libgbm.
-    fn handle(&self) -> u32;
-}
 
 /// A `DumbBuffer` is a simple buffer type provided by all major graphics
 /// drivers. It can be mapped to main memory and provided direct access to the

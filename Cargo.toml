@@ -7,6 +7,9 @@ license = "LGPL-3.0"
 repository = "https://github.com/Slabity/modesetting-rs"
 build = "build.rs"
 
+[features]
+dumbbuffer = []
+
 [build-dependencies]
 gcc = "0.3.32"
 bindgen = "0.19.0"

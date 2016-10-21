@@ -28,16 +28,16 @@
 #[macro_use]
 extern crate error_chain;
 extern crate libc;
-extern crate errno;
 
 mod ffi;
 pub mod result;
-pub mod buffer;
 pub mod mode;
+
+#[cfg(feature="dumbbuffer")]
+pub mod dumbbuffer;
 
 use result::{Result, ErrorKind};
 use mode::Mode;
-use buffer::{Buffer, DumbBuffer};
 
 use std::os::unix::io::AsRawFd;
 use std::fs::{File, OpenOptions};
@@ -45,6 +45,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::mem::transmute;
 use std::vec::IntoIter;
+use std::ops::Deref;
 
 pub type ResourceId = u32;
 pub type ConnectorId = ResourceId;
@@ -59,15 +60,6 @@ pub trait MasterLock<'a, T> {
     fn lock_master(&'a self) -> Result<T>;
     /// Release the master control lock.
     fn release_master(&'a self, guard: T);
-}
-
-/// An object that implements the `Device` trait allows it to perform various
-/// operations that any unprivileged modesetting device has available.
-pub trait Device : AsRef<File> + Sized {
-    /// Attempt to create a `DumbBuffer` object for this device.
-    fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
-        DumbBuffer::create(self, width, height, bpp)
-    }
 }
 
 /// A `Device` is an unprivileged handle to the character device file that
@@ -118,8 +110,6 @@ impl UnprivilegedDevice {
         MasterDevice::from_device(self)
     }
 }
-
-impl Device for UnprivilegedDevice { }
 
 /// A `PrivilegedDevice` is identical to an `UnprivilegedDevice`, but does not
 /// set or drop the DRM master. This is useful on platforms where the program
@@ -341,8 +331,6 @@ impl<'a> MasterDevice<'a> {
         guard.push(id);
     }
 }
-
-impl<'a> Device for MasterDevice<'a> { }
 
 /// A framebuffer is a virtual object that is implemented by the graphics
 /// driver. It can be created from any object that implements the `Buffer`
@@ -660,3 +648,19 @@ impl<'a> DisplayControllers<'a> {
     }
 }
 
+/// An object that implements the `Buffer` trait allows it to be used as a part
+/// of a `Framebuffer`.
+pub trait Buffer {
+    /// The width and height of the buffer.
+    fn size(&self) -> (u32, u32);
+    /// The depth size of the buffer.
+    fn depth(&self) -> u8;
+    /// The number of 'bits per pixel'
+    fn bpp(&self) -> u8;
+    /// The pitch of the buffer.
+    fn pitch(&self) -> u32;
+    /// A handle provided by your graphics driver that can be used to reference
+    /// the buffer, such as a dumb buffer handle or a handle provided by mesa's
+    /// libgbm.
+    fn handle(&self) -> u32;
+}
