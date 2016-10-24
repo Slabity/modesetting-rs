@@ -31,10 +31,11 @@ extern crate libc;
 
 mod ffi;
 pub mod result;
-pub mod buffer;
+
+#[cfg(feature="dumbbuffer")]
+pub mod dumbbuffer;
 
 use result::{Result, ErrorKind};
-use buffer::Buffer;
 
 use std::os::unix::io::AsRawFd;
 use std::fs::{File, OpenOptions};
@@ -50,7 +51,8 @@ pub type EncoderId = ResourceId;
 pub type ControllerId = ResourceId;
 pub type FramebufferId = ResourceId;
 
-/// A `MasterLock` is a lock for a `MasterDevice`.
+/// A `MasterLock` is a lock for a `MasterDevice`. It ensures that only one
+/// handle to the DRM Master is in use at once.
 struct MasterLock<'a> {
     device: &'a Device,
     _guard: MutexGuard<'a, ()>
@@ -135,13 +137,6 @@ impl<'a> Device {
 
 /// A `MasterDevice` is an privileged handle to the character device file that
 /// provides full modesetting capabilities.
-///
-/// Unlike a `Device`, a `MasterDevice` does not own the file descriptor used.
-/// It is the responsibility of the program to open and close the file
-/// descriptor.
-///
-/// A `MasterDevice` can be used to access various modesetting resources. It
-/// also prevents dual ownership of any single resource in multiple locations.
 pub struct MasterDevice<'a> {
     handle: &'a File,
     _guard: MasterLock<'a>,
@@ -364,18 +359,6 @@ impl<'a> Connector<'a> {
         }
     }
 
-    /// Attach an `Encoder` to the `Connector`.
-    pub fn attach_encoder(self, encoder: Encoder<'a>) -> Result<EncodedConnector<'a>> {
-        match self.encoders.iter().any(| &enc | enc == encoder.id) {
-            true => Ok(
-                EncodedConnector {
-                    connector: self,
-                    encoder: encoder
-                }),
-            false => Err(ErrorKind::Incompatible.into())
-        }
-    }
-
     /// Return a list of display modes that this `Connector` can support.
     pub fn modes(&self) -> Vec<Mode> {
         self.modes.clone()
@@ -390,44 +373,6 @@ impl<'a> Connector<'a> {
 impl<'a> Drop for Connector<'a> {
     fn drop(&mut self) {
         self.device.unload_connector(self.id);
-    }
-}
-
-/// An 'EncodedConnector' is a `Connector` with an `Encoder` attached.
-pub struct EncodedConnector<'a> {
-    connector: Connector<'a>,
-    encoder: Encoder<'a>
-}
-
-impl<'a> EncodedConnector<'a> {
-    /// Returns the interface type of the connector.
-    pub fn interface(&self) -> ConnectorInterface {
-        self.connector.interface()
-    }
-
-    /// Returns the current connection state of the connector.
-    pub fn state(&self) -> ConnectorState {
-        self.connector.state()
-    }
-
-    /// Return an iterator over all compatible encoders for this connector.
-    pub fn encoders(&self) -> Encoders<'a> {
-        self.connector.encoders()
-    }
-
-    /// Return an iterator over all the compatible controllers for this connector.
-    pub fn controllers(&self) -> DisplayControllers<'a> {
-        self.encoder.controllers()
-    }
-
-    /// Separate the `Connector` and the attached `Encoder`
-    pub fn detach_encoder(self) -> (Connector<'a>, Encoder<'a>) {
-        (self.connector, self.encoder)
-    }
-
-    /// Return a list of display modes that this `Connector` can support.
-    pub fn modes(&self) -> Vec<Mode> {
-        self.connector.modes()
     }
 }
 
@@ -559,37 +504,22 @@ pub struct DisplayController<'a> {
     id: ControllerId,
 }
 
-impl<'a, 'b, 'c> DisplayController<'a> {
+impl<'a, 'b, 'c, 'd> DisplayController<'a> {
     /// Sets the controller. Unstable.
-    pub fn set_controller(self, fb: &'b Framebuffer, connectors: &'b [EncodedConnector], mode: Mode) -> ActiveController<'a, 'b, 'b> {
-        let connector_ids: Vec<u32> = connectors.iter().map(| con | con.connector.id).collect();
-        ffi::DrmModeSetCrtc::new(self.device.handle.as_raw_fd(), self.id, fb.id, 0, 0, connector_ids, mode.clone().into()).unwrap();
-
-        ActiveController {
-            controller: self,
-            connectors: connectors,
-            framebuffer: fb,
-            mode: mode
-        }
+    pub fn set_controller(self, fb: &'b Framebuffer,
+                          connector: &'c Connector,
+                          encoder: &'d Encoder, mode: Mode) -> Result<()> {
+        try!(
+            ffi::DrmModeSetCrtc::new(self.device.handle.as_raw_fd(),
+            self.id, fb.id, 0, 0, vec![connector.id], mode.into())
+        );
+        Ok(())
     }
 }
 
 impl<'a> Drop for DisplayController<'a> {
     fn drop(&mut self) {
         self.device.unload_controller(self.id);
-    }
-}
-
-pub struct ActiveController<'a, 'b, 'c> {
-    controller: DisplayController<'a>,
-    connectors: &'b [EncodedConnector<'b>],
-    framebuffer: &'c Framebuffer<'c>,
-    mode: Mode
-}
-
-impl<'a, 'b, 'c> ActiveController<'a, 'b, 'c> {
-    pub fn unset_controller(self) -> DisplayController<'a> {
-        self.controller
     }
 }
 
@@ -682,3 +612,22 @@ impl Into<ffi::drm_mode_modeinfo> for Mode {
         }
     }
 }
+
+/// An object that implements the `Buffer` trait allows it to be used as a part
+/// of a `Framebuffer`.
+pub trait Buffer {
+    /// The width and height of the buffer.
+    fn size(&self) -> (u32, u32);
+    /// The depth size of the buffer.
+    fn depth(&self) -> u8;
+    /// The number of 'bits per pixel'
+    fn bpp(&self) -> u8;
+    /// The pitch of the buffer.
+    fn pitch(&self) -> u32;
+    /// A handle provided by your graphics driver that can be used to reference
+    /// the buffer, such as a dumb buffer handle or a handle provided by mesa's
+    /// libgbm.
+    fn handle(&self) -> u32;
+}
+
+
