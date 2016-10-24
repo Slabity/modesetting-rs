@@ -1,5 +1,5 @@
 use super::ffi;
-use super::error::Result;
+use super::result::Result;
 
 use std::os::unix::io::AsRawFd;
 use std::fs::File;

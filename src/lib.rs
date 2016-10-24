@@ -8,7 +8,7 @@
   accessed by opening a character block device and controlling it through
   various ioctls provided by your graphics driver.
 
-  Modesetting consists of opening a UnprivilegedDevice and using four types of resources:
+  Modesetting consists of opening a Device and using four types of resources:
 
   - Connectors: The physical interfaces on your GPU, such as HDMI, VGA, and
   LVDS ports.
@@ -32,11 +32,9 @@ extern crate libc;
 mod ffi;
 pub mod result;
 pub mod buffer;
-pub mod mode;
 
 use result::{Result, ErrorKind};
-use mode::Mode;
-use buffer::{Buffer, DumbBuffer};
+use buffer::Buffer;
 
 use std::os::unix::io::AsRawFd;
 use std::fs::{File, OpenOptions};
@@ -44,6 +42,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::mem::transmute;
 use std::vec::IntoIter;
+use std::ffi::CStr;
 
 pub type ResourceId = u32;
 pub type ConnectorId = ResourceId;
@@ -51,60 +50,65 @@ pub type EncoderId = ResourceId;
 pub type ControllerId = ResourceId;
 pub type FramebufferId = ResourceId;
 
-/// An object that implements `MasterLock` allows itself to acquire and
-/// release the master lock for modesetting actions.
-pub trait MasterLock<'a, T> {
-    /// Acquire the master control lock.
-    fn lock_master(&'a self) -> Result<T>;
-    /// Release the master control lock.
-    fn release_master(&'a self, guard: T);
+/// A `MasterLock` is a lock for a `MasterDevice`.
+struct MasterLock<'a> {
+    device: &'a Device,
+    _guard: MutexGuard<'a, ()>
 }
 
-/// An object that implements the `Device` trait allows it to perform various
-/// operations that any unprivileged modesetting device has available.
-pub trait Device : AsRef<File> + Sized {
-    /// Attempt to create a `DumbBuffer` object for this device.
-    fn dumb_buffer(&self, width: u32, height: u32, bpp: u8) -> Result<DumbBuffer> {
-        DumbBuffer::create(self, width, height, bpp)
+impl<'a> MasterLock<'a> {
+    #[cfg(not(feature="user"))]
+    fn from_device(device: &'a Device) -> Result<MasterLock<'a>> {
+        try!(ffi::set_master(device.file.as_raw_fd()));
+        let guard = device.master_lock.lock().unwrap();
+        let lock = MasterLock {
+            device: device,
+            _guard: guard
+        };
+        Ok(lock)
+    }
+
+    #[cfg(feature="user")]
+    fn from_device(device: &'a Device) -> Result<MasterLock<'a>> {
+        let guard = device.master_lock.lock().unwrap();
+        let lock = MasterLock {
+            device: device,
+            _guard: guard
+        };
+        Ok(lock)
+    }
+}
+
+#[cfg(not(feature="user"))]
+impl<'a> Drop for MasterLock<'a> {
+    fn drop(&mut self) {
+        let _ = ffi::drop_master(self.device.file.as_raw_fd());
     }
 }
 
 /// A `Device` is an unprivileged handle to the character device file that
 /// provides modesetting capabilities.
-pub struct UnprivilegedDevice {
+pub struct Device {
     file: File,
     master_lock: Mutex<()>
 }
 
-impl AsRef<File> for UnprivilegedDevice {
+impl AsRef<File> for Device {
     fn as_ref(&self) -> &File {
         &self.file
     }
 }
 
-impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for UnprivilegedDevice {
-    fn lock_master(&'a self) -> Result<MutexGuard<'a, ()>> {
-        let guard = self.master_lock.lock().unwrap();
-        try!(ffi::set_master(self.file.as_raw_fd()));
-        Ok(guard)
-    }
-
-    #[allow(unused_variables)]
-    fn release_master(&'a self, guard: MutexGuard<'a, ()>) {
-        let _ = ffi::drop_master(self.file.as_raw_fd());
-    }
-}
-
-impl From<File> for UnprivilegedDevice {
-    fn from(file: File) -> UnprivilegedDevice {
-        UnprivilegedDevice {
+impl From<File> for Device {
+    fn from(file: File) -> Device {
+        Device {
             file: file,
             master_lock: Mutex::new(())
         }
     }
 }
 
-impl UnprivilegedDevice {
+impl<'a> Device {
     /// Attempt to open the file specified at the given path.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
@@ -113,47 +117,19 @@ impl UnprivilegedDevice {
     }
 
     /// Acquire the master lock and create a `MasterDevice`
-    pub fn master(&self) -> Result<MasterDevice> {
-        MasterDevice::from_device(self)
-    }
-}
-
-impl Device for UnprivilegedDevice { }
-
-/// A `PrivilegedDevice` is identical to an `UnprivilegedDevice`, but does not
-/// set or drop the DRM master. This is useful on platforms where the program
-/// is granted the privileges by another program, such as a display server or a
-/// session manager like logind.
-pub struct PrivilegedDevice<F> where F: AsRef<File> {
-    file: F,
-    master_lock: Mutex<()>,
-}
-
-impl<F> AsRef<File> for PrivilegedDevice<F> where F: AsRef<File> {
-    fn as_ref(&self) -> &File {
-        self.file.as_ref()
-    }
-}
-
-impl<'a, F> MasterLock<'a, MutexGuard<'a, ()>> for PrivilegedDevice<F> where F: AsRef<File> {
-    fn lock_master(&'a self) -> Result<MutexGuard<'a, ()>> {
-        let guard = self.master_lock.lock().unwrap();
-        Ok(guard)
-    }
-
-    #[allow(unused_variables)]
-    fn release_master(&'a self, guard: MutexGuard<'a, ()>) {
-        // Simply consumes the guard and returns it to its mutex.
-    }
-}
-
-impl<'a, F> PrivilegedDevice<F> where F: AsRef<File> {
-    /// Create a `PrivilegedDevice` from an opened file.
-    pub fn from_file_ref(file: F) -> PrivilegedDevice<F> {
-        PrivilegedDevice {
-            file: file,
-            master_lock: Mutex::new(())
-        }
+    pub fn lock_master(&'a self) -> Result<MasterDevice<'a>> {
+        let lock = try!(MasterLock::from_device(self));
+        let fd = self.file.as_raw_fd();
+        let raw = try!(ffi::DrmModeCardRes::new(fd));
+        let master = MasterDevice {
+            handle: &self.file,
+            _guard: lock,
+            connectors: Mutex::new(raw.connectors.clone()),
+            encoders: Mutex::new(raw.encoders.clone()),
+            controllers: Mutex::new(raw.crtcs.clone()),
+            controllers_order: raw.crtcs.clone(),
+        };
+        Ok(master)
     }
 }
 
@@ -168,7 +144,7 @@ impl<'a, F> PrivilegedDevice<F> where F: AsRef<File> {
 /// also prevents dual ownership of any single resource in multiple locations.
 pub struct MasterDevice<'a> {
     handle: &'a File,
-    _guard: MutexGuard<'a, ()>,
+    _guard: MasterLock<'a>,
     connectors: Mutex<Vec<ConnectorId>>,
     encoders: Mutex<Vec<EncoderId>>,
     controllers: Mutex<Vec<ControllerId>>,
@@ -182,21 +158,6 @@ impl<'a> AsRef<File> for MasterDevice<'a> {
 }
 
 impl<'a> MasterDevice<'a> {
-    pub fn from_device<T: MasterLock<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
-        let file = device.as_ref();
-        let fd = file.as_raw_fd();
-        let raw = try!(ffi::DrmModeCardRes::new(fd));
-        let dev = MasterDevice {
-            handle: file,
-            _guard: try!(device.lock_master()),
-            connectors: Mutex::new(raw.connectors.clone()),
-            encoders: Mutex::new(raw.encoders.clone()),
-            controllers: Mutex::new(raw.crtcs.clone()),
-            controllers_order: raw.crtcs.clone(),
-        };
-        Ok(dev)
-    }
-
     /// Attempt to create an abstract `Framebuffer` object from the provided
     /// `Buffer`.
     pub fn framebuffer<T: Buffer>(&self, buffer: &T) -> Result<Framebuffer> {
@@ -340,8 +301,6 @@ impl<'a> MasterDevice<'a> {
         guard.push(id);
     }
 }
-
-impl<'a> Device for MasterDevice<'a> { }
 
 /// A framebuffer is a virtual object that is implemented by the graphics
 /// driver. It can be created from any object that implements the `Buffer`
@@ -659,3 +618,67 @@ impl<'a> DisplayControllers<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct Mode {
+    pub name: String,
+    pub clock: u32,
+    pub display: (u16, u16),
+    pub hsync: (u16, u16),
+    pub vsync: (u16, u16),
+    pub hskew: u16,
+    pub vscan: u16,
+    pub htotal: u16,
+    pub vtotal: u16,
+    pub vrefresh: u32,
+    pub flags: u32,
+    pub mode_type: u32,
+}
+
+impl From<ffi::drm_mode_modeinfo> for Mode {
+    fn from(raw: ffi::drm_mode_modeinfo) -> Mode {
+        let name = unsafe {
+            CStr::from_ptr(raw.name.as_ptr()).to_str().unwrap()
+        };
+
+        Mode {
+            name: name.to_string(),
+            clock: raw.clock,
+            display: (raw.hdisplay, raw.vdisplay),
+            hsync: (raw.hsync_start, raw.hsync_end),
+            vsync: (raw.vsync_start, raw.vsync_end),
+            hskew: raw.hskew,
+            vscan: raw.vscan,
+            htotal: raw.htotal,
+            vtotal: raw.vtotal,
+            vrefresh: raw.vrefresh,
+            flags: raw.flags,
+            mode_type: raw.type_
+        }
+    }
+}
+
+impl Into<ffi::drm_mode_modeinfo> for Mode {
+    fn into(self) -> ffi::drm_mode_modeinfo {
+        let (hdisplay, vdisplay) = self.display;
+        let (hsync_start, hsync_end) = self.hsync;
+        let (vsync_start, vsync_end) = self.vsync;
+
+        ffi::drm_mode_modeinfo {
+            name: [0; 32],
+            clock: self.clock,
+            hdisplay: hdisplay,
+            vdisplay: vdisplay,
+            hsync_start: hsync_start,
+            hsync_end: hsync_end,
+            vsync_start: vsync_start,
+            vsync_end: vsync_end,
+            hskew: self.hskew,
+            vscan: self.vscan,
+            htotal: self.htotal,
+            vtotal: self.vtotal,
+            vrefresh: self.vrefresh,
+            flags: self.flags,
+            type_: self.mode_type
+        }
+    }
+}
