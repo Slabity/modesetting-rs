@@ -2,7 +2,7 @@ mod drm_shim;
 
 pub use self::drm_shim::*;
 use std::io::Error;
-use ::error::Result;
+use ::result::Result;
 use std::os::unix::io::RawFd;
 use std::ptr::null;
 use libc::{ioctl, c_void};
