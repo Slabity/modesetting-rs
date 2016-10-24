@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod drm_shim;
 
 pub use self::drm_shim::*;
