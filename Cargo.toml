@@ -12,8 +12,8 @@ dumbbuffer = []
 
 [build-dependencies]
 gcc = "0.3.32"
-bindgen = "0.19.0"
+bindgen = { "git" = "https://github.com/servo/rust-bindgen.git" }
 
 [dependencies]
-libc = "0.2.15"
+libc = "*"
 error-chain = "*"
