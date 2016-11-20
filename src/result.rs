@@ -12,6 +12,10 @@ error_chain! {
             description("unavailable resource requested")
             display("attempted to acquire resource")
         }
+        UnknownPropertyType {
+            description("unknown property type")
+            display("property not stored in enum or blob")
+        }
     }
 }
 
