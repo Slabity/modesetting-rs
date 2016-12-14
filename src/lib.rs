@@ -36,147 +36,268 @@ pub mod mode;
 #[cfg(feature="dumbbuffer")]
 pub mod dumbbuffer;
 
-use result::{Result, ErrorKind};
-use mode::Mode;
+use result::Result;
 
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::marker::PhantomData;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::borrow::Borrow;
 use std::mem::transmute;
-use std::vec::IntoIter;
-use std::ops::Deref;
 
 pub type ResourceId = u32;
-pub type ConnectorId = ResourceId;
-pub type EncoderId = ResourceId;
-pub type ControllerId = ResourceId;
-pub type FramebufferId = ResourceId;
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ConnectorId(ResourceId);
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct EncoderId(ResourceId);
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ControllerId(ResourceId);
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FramebufferId(ResourceId);
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PlaneId(ResourceId);
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PropertyId(ResourceId);
 
-/// An object that implements `MasterLock` allows itself to acquire and
-/// release the master lock for modesetting actions.
-pub trait MasterLock<'a, T> {
-    /// Acquire the master control lock.
-    fn lock_master(&'a self) -> Result<T>;
-    /// Release the master control lock.
-    fn release_master(&'a self, guard: T);
-}
+/// A `Device` is a privileged handle to the character device that provides
+/// modesetting capabilities.
+#[derive(Debug)]
+pub struct Device<T>(T) where T: Borrow<File>;
 
-/// A `Device` is an unprivileged handle to the character device file that
-/// provides modesetting capabilities.
-pub struct UnprivilegedDevice {
-    file: File,
-    master_lock: Mutex<()>
-}
-
-impl AsRef<File> for UnprivilegedDevice {
-    fn as_ref(&self) -> &File {
-        &self.file
+impl<T> AsRawFd for Device<T> where T: Borrow<File> {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0.borrow().as_raw_fd()
     }
 }
 
-impl<'a> MasterLock<'a, MutexGuard<'a, ()>> for UnprivilegedDevice {
-    fn lock_master(&'a self) -> Result<MutexGuard<'a, ()>> {
-        let guard = self.master_lock.lock().unwrap();
-        try!(ffi::set_master(self.file.as_raw_fd()));
-        Ok(guard)
-    }
-
-    #[allow(unused_variables)]
-    fn release_master(&'a self, guard: MutexGuard<'a, ()>) {
-        let _ = ffi::drop_master(self.file.as_raw_fd());
-    }
-}
-
-impl From<File> for UnprivilegedDevice {
-    fn from(file: File) -> UnprivilegedDevice {
-        UnprivilegedDevice {
-            file: file,
-            master_lock: Mutex::new(())
-        }
-    }
-}
-
-impl UnprivilegedDevice {
-    /// Attempt to open the file specified at the given path.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+impl Device<File> {
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Device<File>> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
-        let dev = Self::from(file);
-        Ok(dev)
-    }
-
-    /// Acquire the master lock and create a `MasterDevice`
-    pub fn master(&self) -> Result<MasterDevice> {
-        MasterDevice::from_device(self)
+        Ok(Device(file))
     }
 }
 
-/// A `PrivilegedDevice` is identical to an `UnprivilegedDevice`, but does not
-/// set or drop the DRM master. This is useful on platforms where the program
-/// is granted the privileges by another program, such as a display server or a
-/// session manager like logind.
-pub struct PrivilegedDevice<F> where F: AsRef<File> {
-    file: F,
-    master_lock: Mutex<()>,
-}
-
-impl<F> AsRef<File> for PrivilegedDevice<F> where F: AsRef<File> {
-    fn as_ref(&self) -> &File {
-        self.file.as_ref()
-    }
-}
-
-impl<'a, F> MasterLock<'a, MutexGuard<'a, ()>> for PrivilegedDevice<F> where F: AsRef<File> {
-    fn lock_master(&'a self) -> Result<MutexGuard<'a, ()>> {
-        let guard = self.master_lock.lock().unwrap();
-        Ok(guard)
-    }
-
-    #[allow(unused_variables)]
-    fn release_master(&'a self, guard: MutexGuard<'a, ()>) {
-        // Simply consumes the guard and returns it to its mutex.
-    }
-}
-
-impl<'a, F> PrivilegedDevice<F> where F: AsRef<File> {
-    /// Create a `PrivilegedDevice` from an opened file.
-    pub fn from_file_ref(file: F) -> PrivilegedDevice<F> {
-        PrivilegedDevice {
-            file: file,
-            master_lock: Mutex::new(())
-        }
-    }
-}
-
-/// A `MasterDevice` is an privileged handle to the character device file that
-/// provides full modesetting capabilities.
-///
-/// Unlike a `Device`, a `MasterDevice` does not own the file descriptor used.
-/// It is the responsibility of the program to open and close the file
-/// descriptor.
-///
-/// A `MasterDevice` can be used to access various modesetting resources. It
-/// also prevents dual ownership of any single resource in multiple locations.
-pub struct MasterDevice<'a> {
-    handle: &'a File,
-    _guard: MutexGuard<'a, ()>,
-}
-
-impl<'a> AsRef<File> for MasterDevice<'a> {
-    fn as_ref(&self) -> &File {
-        self.handle
-    }
-}
-
-impl<'a> MasterDevice<'a> {
-    pub fn from_device<T: MasterLock<'a, MutexGuard<'a, ()>> + AsRef<File>>(device: &'a T) -> Result<Self> {
-        let file = device.as_ref();
-        let fd = file.as_raw_fd();
-        let dev = MasterDevice {
-            handle: file,
-            _guard: try!(device.lock_master()),
+impl<T> Device<T> where T: Borrow<File> {
+    pub fn resources(&self) -> Result<Resources> {
+        let card = try!(ffi::DrmModeCardRes::new(self.as_raw_fd()));
+        let planes = try!(ffi::DrmModePlaneRes::new(self.as_raw_fd()));
+        let res = unsafe {
+            Resources {
+                connectors: transmute(card.connectors),
+                encoders: transmute(card.encoders),
+                controllers: transmute(card.crtcs),
+                framebuffers: transmute(card.framebuffers),
+                planes: transmute(planes.planes)
+            }
         };
-        Ok(dev)
+        Ok(res)
+    }
+
+    pub fn connector<'a>(&'a self, id: ConnectorId) -> Result<Connector<'a>> {
+        let con = Connector {
+            _phantom: PhantomData,
+            device_fd: self.as_raw_fd(),
+            id: id
+        };
+        Ok(con)
+    }
+
+    pub fn encoder<'a>(&'a self, id: EncoderId) -> Result<Encoder<'a>> {
+        let enc = Encoder {
+            _phantom: PhantomData,
+            device_fd: self.as_raw_fd(),
+            id: id
+        };
+        Ok(enc)
+    }
+
+    pub fn controller<'a>(&'a self, id: ControllerId) -> Result<Controller<'a>> {
+        let con = Controller {
+            _phantom: PhantomData,
+            device_fd: self.as_raw_fd(),
+            id: id
+        };
+        Ok(con)
+    }
+
+    pub fn plane<'a>(&'a self, id: PlaneId) -> Result<Plane<'a>> {
+        let plane = Plane {
+            _phantom: PhantomData,
+            device_fd: self.as_raw_fd(),
+            id: id
+        };
+        Ok(plane)
+    }
+
+    pub fn property<'a>(&'a self, id: PropertyId) -> Result<Property<'a>> {
+        let ffi = try!(ffi::DrmModeGetProperty::new(self.as_raw_fd(), id.0));
+
+        let name = unsafe {
+            let cstr = std::ffi::CStr::from_ptr(&ffi.raw.name as *const _);
+            cstr.to_str().unwrap().to_string()
+        };
+
+        let value = match ffi.values {
+            // Value is an enum. Generate the enum values.
+            ffi::DrmModePropertyValues::Enums(e) => {
+                // Collect each possible enum value.
+                let values = e.enums.iter().map(| &en | {
+                    let name = unsafe {
+                        let cstr = std::ffi::CStr::from_ptr(&en.name as *const _);
+                        cstr.to_str().unwrap().to_string()
+                    };
+                    let value = en.value;
+                    (value, name)
+                }).collect();
+
+                // Current value is...?
+                let current = 0;
+
+                let prop_enum = PropertyEnum {
+                    value: current,
+                    possible_values: values
+                };
+
+                PropertyType::Enum(prop_enum)
+            },
+            ffi::DrmModePropertyValues::Blobs(b) => {
+                let prop_blob = PropertyBlob {
+                    values: b.values,
+                    blobs: b.blobs
+                };
+
+                PropertyType::Blob(prop_blob)
+            }
+        };
+
+        let prop = Property {
+            _phantom: PhantomData,
+            name: name,
+            id: id,
+            value: value
+        };
+        Ok(prop)
+    }
+}
+
+pub trait Resource {
+    fn get_property_ids(&self) -> Result<Vec<PropertyId>>;
+}
+
+#[derive(Debug)]
+pub struct Resources {
+    pub connectors: Vec<ConnectorId>,
+    pub encoders: Vec<EncoderId>,
+    pub controllers: Vec<ControllerId>,
+    pub framebuffers: Vec<FramebufferId>,
+    pub planes: Vec<PlaneId>
+}
+
+#[derive(Debug)]
+pub struct Connector<'a> {
+    _phantom: PhantomData<&'a ()>,
+    device_fd: RawFd,
+    id: ConnectorId,
+}
+
+#[derive(Debug)]
+pub struct Encoder<'a> {
+    _phantom: PhantomData<&'a ()>,
+    device_fd: RawFd,
+    id: EncoderId,
+}
+
+#[derive(Debug)]
+pub struct Controller<'a> {
+    _phantom: PhantomData<&'a ()>,
+    device_fd: RawFd,
+    id: ControllerId,
+}
+
+#[derive(Debug)]
+pub struct Plane<'a> {
+    _phantom: PhantomData<&'a ()>,
+    device_fd: RawFd,
+    id: PlaneId,
+}
+
+#[derive(Debug)]
+pub struct PropertyRange {
+    value: u64,
+    range: (u64, u64)
+}
+
+#[derive(Debug)]
+pub struct PropertyEnum {
+    value: u64,
+    possible_values: Vec<(u64, String)>
+}
+
+#[derive(Debug)]
+// Unsure how to handle blobs. Just using this representation for now.
+pub struct PropertyBlob {
+    values: Vec<u32>,
+    blobs: Vec<u32>
+}
+
+#[derive(Debug)]
+pub enum PropertyType {
+    Range(PropertyRange),
+    Enum(PropertyEnum),
+    Blob(PropertyBlob)
+}
+
+#[derive(Debug)]
+pub struct Property<'a> {
+    _phantom: PhantomData<&'a ()>,
+    name: String,
+    id: PropertyId,
+    value: PropertyType
+}
+
+impl<'a> Resource for Connector<'a> {
+    fn get_property_ids(&self) -> Result<Vec<PropertyId>> {
+        let ffi = try!(ffi::DrmModeObjectGetProperties::new(self.device_fd, self.id.0, ffi::DRM_MODE_OBJECT_CONNECTOR));
+        let prop = unsafe {
+            transmute(ffi.prop_ids)
+        };
+        Ok(prop)
+    }
+}
+
+impl<'a> Resource for Encoder<'a> {
+    fn get_property_ids(&self) -> Result<Vec<PropertyId>> {
+        let ffi = try!(ffi::DrmModeObjectGetProperties::new(self.device_fd, self.id.0, ffi::DRM_MODE_OBJECT_ENCODER));
+        let prop = unsafe {
+            transmute(ffi.prop_ids)
+        };
+        Ok(prop)
+    }
+}
+
+impl<'a> Resource for Controller<'a> {
+    fn get_property_ids(&self) -> Result<Vec<PropertyId>> {
+        let ffi = try!(ffi::DrmModeObjectGetProperties::new(self.device_fd, self.id.0, ffi::DRM_MODE_OBJECT_CRTC));
+        let prop = unsafe {
+            transmute(ffi.prop_ids)
+        };
+        Ok(prop)
+    }
+}
+
+impl<'a> Resource for Plane<'a> {
+    fn get_property_ids(&self) -> Result<Vec<PropertyId>> {
+        let ffi = try!(ffi::DrmModeObjectGetProperties::new(self.device_fd, self.id.0, ffi::DRM_MODE_OBJECT_PLANE));
+        let prop = unsafe {
+            transmute(ffi.prop_ids)
+        };
+        Ok(prop)
     }
 }
 
@@ -196,3 +317,4 @@ pub trait Buffer {
     /// libgbm.
     fn handle(&self) -> u32;
 }
+

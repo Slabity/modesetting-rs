@@ -1,9 +1,8 @@
-extern crate gcc;
-extern crate bindgen;
+extern crate libbindgen;
 
 // Generate rust bindings to access drm structs
 fn generate_shim_bindings() {
-    let mut builder = bindgen::Builder::default();
+    let mut builder = libbindgen::Builder::default();
     builder = builder.header("src/ffi/c/ioctls.h");
     builder = builder.link("drm");
 
