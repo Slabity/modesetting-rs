@@ -47,22 +47,36 @@ impl DrmModeObjectGetProperties {
     }
 }
 
+// TODO: Unsure how to handle this yet
 #[derive(Debug)]
-pub struct DrmModePropertyEnums {
+pub struct DrmModePropertyEnum {
     pub values: Vec<u64>,
     pub enums: Vec<drm_mode_property_enum>
 }
 
 #[derive(Debug)]
-pub struct DrmModePropertyBlobs {
+pub struct DrmModePropertyBlob {
     pub values: Vec<u32>,
-    pub blobs: Vec<u32>
+    pub blob: Vec<u32>
+}
+
+// TODO: Unsure how to handle this yet
+#[derive(Debug)]
+pub struct DrmModePropertyRange {
+    pub values: Vec<u64>
+}
+
+// TODO: Unsure how to handle this yet
+#[derive(Debug)]
+pub struct DrmModePropertyObject {
 }
 
 #[derive(Debug)]
 pub enum DrmModePropertyValues {
-    Enums(DrmModePropertyEnums),
-    Blobs(DrmModePropertyBlobs)
+    Enum(DrmModePropertyEnum),
+    Blob(DrmModePropertyBlob),
+    Range(DrmModePropertyRange),
+    Object(DrmModePropertyObject)
 }
 
 #[derive(Debug)]
@@ -80,31 +94,13 @@ impl DrmModeGetProperty {
         // Check if the properties are in enums or blobs
         let values =
             if (raw.flags & (DRM_MODE_PROP_ENUM | DRM_MODE_PROP_BITMASK)) != 0 {
-                let mut values: Vec<u64> =
-                    vec![unsafe { mem::zeroed() }; raw.count_values as usize];
-                let mut enums: Vec<drm_mode_property_enum> =
-                    vec![unsafe { mem::zeroed() }; raw.count_enum_blobs as usize];
-
-                raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
-                raw.enum_blob_ptr = enums.as_mut_slice().as_mut_ptr() as u64;
-
-                DrmModePropertyValues::Enums(DrmModePropertyEnums {
-                    values: values,
-                    enums: enums
-                })
+                DrmModePropertyValues::Enum(Self::new_enum(&mut raw))
             } else if (raw.flags & DRM_MODE_PROP_BLOB) != 0 {
-                let mut values: Vec<u32> =
-                    vec![unsafe { mem::zeroed() }; raw.count_enum_blobs as usize];
-                let mut blobs: Vec<u32> =
-                    vec![unsafe { mem::zeroed() }; raw.count_enum_blobs as usize];
-
-                raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
-                raw.enum_blob_ptr = blobs.as_mut_slice().as_mut_ptr() as u64;
-
-                DrmModePropertyValues::Blobs(DrmModePropertyBlobs {
-                    values: values,
-                    blobs: blobs
-                })
+                DrmModePropertyValues::Blob(Self::new_blob(&mut raw))
+            } else if (raw.flags & DRM_MODE_PROP_RANGE) != 0 {
+                DrmModePropertyValues::Range(Self::new_range(&mut raw))
+            } else if (raw.flags & DRM_MODE_PROP_RANGE) != 0 {
+                DrmModePropertyValues::Object(Self::new_object(&mut raw))
             } else {
                 return Err(ErrorKind::UnknownPropertyType(raw.flags).into());
             };
@@ -115,6 +111,54 @@ impl DrmModeGetProperty {
             raw: raw,
             values: values
         };
+
         Ok(prop)
+    }
+
+    fn new_enum(raw: &mut drm_mode_get_property) -> DrmModePropertyEnum {
+        // Create buffers to hold the data
+        let mut values: Vec<u64> =
+            vec![unsafe { mem::zeroed() }; raw.count_values as usize];
+        let mut enums: Vec<drm_mode_property_enum> =
+            vec![unsafe { mem::zeroed() }; raw.count_enum_blobs as usize];
+
+        // Assign the raw pointers of the buffers to the raw struct
+        raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
+        raw.enum_blob_ptr = enums.as_mut_slice().as_mut_ptr() as u64;
+
+        DrmModePropertyEnum {
+            values: values,
+            enums: enums
+        }
+    }
+
+    fn new_blob(raw: &mut drm_mode_get_property) -> DrmModePropertyBlob {
+        let mut values: Vec<u32> =
+            vec![unsafe { mem::zeroed() }; raw.count_enum_blobs as usize];
+        let mut blob: Vec<u32> =
+            vec![unsafe { mem::zeroed() }; raw.count_enum_blobs as usize];
+
+        raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
+        raw.enum_blob_ptr = blob.as_mut_slice().as_mut_ptr() as u64;
+
+        DrmModePropertyBlob {
+            values: values,
+            blob: blob
+        }
+    }
+
+    fn new_range(raw: &mut drm_mode_get_property) -> DrmModePropertyRange {
+        let mut values: Vec<u64> =
+            vec![unsafe { mem::zeroed() }; raw.count_values as usize];
+
+        raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
+
+        DrmModePropertyRange {
+            values: values
+        }
+    }
+
+    fn new_object(raw: &mut drm_mode_get_property) -> DrmModePropertyObject {
+        DrmModePropertyObject {}
     }
 }

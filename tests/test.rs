@@ -10,7 +10,6 @@ fn enumerate() {
 
     for &id in resources.connectors.iter() {
         let connector = device.connector(id).unwrap();
-        println!("{:#?}", connector);
 
         let props = connector.get_property_ids().unwrap();
         for id in props {
@@ -21,12 +20,10 @@ fn enumerate() {
 
     for &id in resources.encoders.iter() {
         let encoder = device.encoder(id).unwrap();
-        println!("{:#?}", encoder);
     }
 
     for &id in resources.controllers.iter() {
         let controller = device.controller(id).unwrap();
-        println!("{:#?}", controller);
 
         let props = controller.get_property_ids().unwrap();
         for id in props {
@@ -37,7 +34,6 @@ fn enumerate() {
 
     for &id in resources.planes.iter() {
         let plane = device.plane(id).unwrap();
-        println!("{:#?}", plane);
 
         let props = plane.get_property_ids().unwrap();
         for id in props {
@@ -46,3 +42,4 @@ fn enumerate() {
         }
     }
 }
+

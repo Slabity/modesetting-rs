@@ -145,7 +145,7 @@ impl<T> Device<T> where T: Borrow<File> {
 
         let value = match ffi.values {
             // Value is an enum. Generate the enum values.
-            ffi::DrmModePropertyValues::Enums(e) => {
+            ffi::DrmModePropertyValues::Enum(e) => {
                 // Collect each possible enum value.
                 let values = e.enums.iter().map(| &en | {
                     let name = unsafe {
@@ -166,13 +166,31 @@ impl<T> Device<T> where T: Borrow<File> {
 
                 PropertyType::Enum(prop_enum)
             },
-            ffi::DrmModePropertyValues::Blobs(b) => {
+            ffi::DrmModePropertyValues::Blob(b) => {
                 let prop_blob = PropertyBlob {
                     values: b.values,
-                    blobs: b.blobs
+                    blobs: b.blob
                 };
 
                 PropertyType::Blob(prop_blob)
+            },
+            ffi::DrmModePropertyValues::Range(r) => {
+                let &min = r.values.get(0).unwrap();
+                let &max = r.values.get(1).unwrap();
+
+                let prop_range = PropertyRange {
+                    value: 0,
+                    range: (min, max)
+                };
+
+                PropertyType::Range(prop_range)
+            },
+            ffi::DrmModePropertyValues::Object(r) => {
+                let prop_obj = PropertyObject {
+                    value: 0,
+                };
+
+                PropertyType::Object(prop_obj)
             }
         };
 
@@ -228,12 +246,6 @@ pub struct Plane<'a> {
 }
 
 #[derive(Debug)]
-pub struct PropertyRange {
-    value: u64,
-    range: (u64, u64)
-}
-
-#[derive(Debug)]
 pub struct PropertyEnum {
     value: u64,
     possible_values: Vec<(u64, String)>
@@ -247,10 +259,22 @@ pub struct PropertyBlob {
 }
 
 #[derive(Debug)]
+pub struct PropertyRange {
+    value: u64,
+    range: (u64, u64)
+}
+
+#[derive(Debug)]
+pub struct PropertyObject {
+    value: u64
+}
+
+#[derive(Debug)]
 pub enum PropertyType {
-    Range(PropertyRange),
     Enum(PropertyEnum),
-    Blob(PropertyBlob)
+    Blob(PropertyBlob),
+    Range(PropertyRange),
+    Object(PropertyObject)
 }
 
 #[derive(Debug)]
