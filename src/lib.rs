@@ -79,6 +79,8 @@ impl<T> AsRawFd for Device<T> where T: Borrow<File> {
 impl Device<File> {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Device<File>> {
         let file = try!(OpenOptions::new().read(true).write(true).open(path));
+        ffi::enable_universal_planes(file.as_raw_fd());
+        ffi::enable_atomic(file.as_raw_fd());
         Ok(Device(file))
     }
 }

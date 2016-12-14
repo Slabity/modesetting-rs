@@ -35,6 +35,24 @@ pub fn drop_master(fd: RawFd) -> Result<()> {
     Ok(())
 }
 
+pub fn enable_atomic(fd: RawFd) -> Result<()> {
+    let mut raw: drm_set_client_cap = unsafe { mem::zeroed() };
+    raw.capability = DRM_CLIENT_CAP_UNIVERSAL_PLANES as u64;
+    raw.value = 1;
+
+    ioctl!(fd, MACRO_DRM_IOCTL_SET_CLIENT_CAP, &raw);
+    Ok(())
+}
+
+pub fn enable_universal_planes(fd: RawFd) -> Result<()> {
+    let mut raw: drm_set_client_cap = unsafe { mem::zeroed() };
+    raw.capability = DRM_CLIENT_CAP_ATOMIC as u64;
+    raw.value = 1;
+
+    ioctl!(fd, MACRO_DRM_IOCTL_SET_CLIENT_CAP, &raw);
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct DrmModeCreateDumbBuffer {
     pub raw: drm_mode_create_dumb

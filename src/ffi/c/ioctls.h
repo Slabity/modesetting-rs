@@ -1,8 +1,9 @@
 #include <libdrm/drm.h>
 #include <libdrm/drm_mode.h>
 
-const long MACRO_DRM_IOCTL_SET_MASTER   = DRM_IO(0x1e);
-const long MACRO_DRM_IOCTL_DROP_MASTER  = DRM_IO(0x1f);
+const long MACRO_DRM_IOCTL_SET_MASTER       = DRM_IO(0x1e);
+const long MACRO_DRM_IOCTL_DROP_MASTER      = DRM_IO(0x1f);
+const long MACRO_DRM_IOCTL_SET_CLIENT_CAP   = DRM_IO(0x0d);
 
 const long MACRO_DRM_IOCTL_MODE_GETRESOURCES    = DRM_IOWR(0xA0, struct drm_mode_card_res);
 const long MACRO_DRM_IOCTL_MODE_GETCRTC         = DRM_IOWR(0xA1, struct drm_mode_crtc);
