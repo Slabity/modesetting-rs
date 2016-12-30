@@ -4,13 +4,25 @@ error_chain! {
     }
 
     errors {
-        Incompatible {
-            description("incompatible resource pair")
-            display("attempted to attach resouces")
+        PermissionDenied {
+            description("not the DRM master")
+            display("not the DRM master")
         }
-        NotAvailable {
-            description("unavailable resource requested")
-            display("attempted to acquire resource")
+        InvalidNode {
+            description("invalid DRM control node")
+            display("invalid DRM control node")
+        }
+        InvalidVersion {
+            description("invalid version description")
+            display("invalid version description")
+        }
+        InvalidResource(id: u32) {
+            description("could not load resource")
+            display("could not load resource: {}", id)
+        }
+        Unsupported(msg: &'static str) {
+            description("unsupported operation")
+            display("unsupported operation {}", msg)
         }
         UnknownPropertyType(flags: u32) {
             description("unknown property type")

@@ -1,9 +1,16 @@
 #include <libdrm/drm.h>
 #include <libdrm/drm_mode.h>
 
+const unsigned int MACRO_DRM_MODE_PROP_EXTENDED_TYPE    = DRM_MODE_PROP_EXTENDED_TYPE;
+const unsigned int MACRO_DRM_MODE_PROP_OBJECT           = DRM_MODE_PROP_OBJECT;
+const unsigned int MACRO_DRM_MODE_PROP_SIGNED_RANGE     = DRM_MODE_PROP_SIGNED_RANGE;
+
+const long MACRO_DRM_IOCTL_VERSION  = DRM_IOWR(0x00, struct drm_version);
+
 const long MACRO_DRM_IOCTL_SET_MASTER       = DRM_IO(0x1e);
 const long MACRO_DRM_IOCTL_DROP_MASTER      = DRM_IO(0x1f);
-const long MACRO_DRM_IOCTL_SET_CLIENT_CAP   = DRM_IO(0x0d);
+
+const long MACRO_DRM_IOCTL_SET_CLIENT_CAP   = DRM_IOW(0x0d, struct drm_set_client_cap);
 
 const long MACRO_DRM_IOCTL_MODE_GETRESOURCES    = DRM_IOWR(0xA0, struct drm_mode_card_res);
 const long MACRO_DRM_IOCTL_MODE_GETCRTC         = DRM_IOWR(0xA1, struct drm_mode_crtc);

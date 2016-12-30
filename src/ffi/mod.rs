@@ -13,8 +13,10 @@ use std::mem;
 use std::ptr::null;
 use std::os::unix::io::RawFd;
 use std::io::Error as IoError;
+use std::ffi::CString;
 use libc::{ioctl, c_void};
-use ::result::Result;
+use ::result::{Result, ErrorKind};
+
 
 // This macro simply wraps the ioctl call to return errno on failure
 macro_rules! ioctl {
@@ -37,20 +39,64 @@ pub fn drop_master(fd: RawFd) -> Result<()> {
 
 pub fn enable_atomic(fd: RawFd) -> Result<()> {
     let mut raw: drm_set_client_cap = unsafe { mem::zeroed() };
-    raw.capability = DRM_CLIENT_CAP_UNIVERSAL_PLANES as u64;
+    raw.capability = DRM_CLIENT_CAP_ATOMIC as u64;
     raw.value = 1;
-
     ioctl!(fd, MACRO_DRM_IOCTL_SET_CLIENT_CAP, &raw);
     Ok(())
 }
 
 pub fn enable_universal_planes(fd: RawFd) -> Result<()> {
     let mut raw: drm_set_client_cap = unsafe { mem::zeroed() };
-    raw.capability = DRM_CLIENT_CAP_ATOMIC as u64;
+    raw.capability = DRM_CLIENT_CAP_UNIVERSAL_PLANES as u64;
     raw.value = 1;
-
     ioctl!(fd, MACRO_DRM_IOCTL_SET_CLIENT_CAP, &raw);
     Ok(())
+}
+
+pub struct Version {
+    pub number: (i32, i32, i32),
+    pub name: CString,
+    pub date: CString,
+    pub desc: CString
+}
+
+pub fn get_version(fd: RawFd) -> Result<Version> {
+    let mut raw: drm_version = unsafe { mem::zeroed() };
+    ioctl!(fd, MACRO_DRM_IOCTL_VERSION, &raw);
+
+    let mut name: Vec<u8> = vec![0; raw.name_len as usize];
+    let mut date: Vec<u8> = vec![0; raw.date_len as usize];
+    let mut desc: Vec<u8> = vec![0; raw.desc_len as usize];
+
+    raw.name = name.as_mut_slice().as_mut_ptr() as *mut _;
+    raw.date = date.as_mut_slice().as_mut_ptr() as *mut _;
+    raw.desc = desc.as_mut_slice().as_mut_ptr() as *mut _;
+
+    ioctl!(fd, MACRO_DRM_IOCTL_VERSION, &raw);
+
+    let name = match CString::new(name) {
+        Ok(s) => s,
+        Err(_) => bail!(ErrorKind::InvalidVersion)
+    };
+    let date = match CString::new(date) {
+        Ok(s) => s,
+        Err(_) => bail!(ErrorKind::InvalidVersion)
+    };
+    let desc = match CString::new(desc) {
+        Ok(s) => s,
+        Err(_) => bail!(ErrorKind::InvalidVersion)
+    };
+
+    let n = (raw.version_major, raw.version_minor, raw.version_patchlevel);
+
+    let version = Version {
+        number: n,
+        name: name,
+        date: date,
+        desc: desc
+    };
+
+    Ok(version)
 }
 
 #[derive(Debug)]

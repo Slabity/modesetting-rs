@@ -1,45 +1,48 @@
 extern crate modesetting;
 
-use modesetting::Device;
+use modesetting::Context;
 use modesetting::Resource;
+use modesetting::PropertyValue::Enum;
+use modesetting::PropertyInfo;
+use modesetting::Buffer;
 
 #[test]
 fn enumerate() {
-    let device = Device::open("/dev/dri/card0").unwrap();
-    let resources = device.resources().unwrap();
+    let mut ctx = Context::from_path("/dev/dri/card0").unwrap();
 
-    for &id in resources.connectors.iter() {
-        let connector = device.connector(id).unwrap();
-
-        let props = connector.get_property_ids().unwrap();
-        for id in props {
-            let prop = device.property(id);
-            println!("{:#?}", prop);
+    let cons: Vec<_> = ctx.connectors().iter().filter(| &c | {
+        match c.connector_state() {
+            Ok(modesetting::ConnectorState::Connected(_, (_, _))) => true,
+            _ => false
         }
-    }
+    }).collect();
 
-    for &id in resources.encoders.iter() {
-        let encoder = device.encoder(id).unwrap();
-    }
+    let connected = cons.get(0).unwrap();
 
-    for &id in resources.controllers.iter() {
-        let controller = device.controller(id).unwrap();
-
-        let props = controller.get_property_ids().unwrap();
-        for id in props {
-            let prop = device.property(id);
-            println!("{:#?}", prop);
+    let planes: Vec<_> = ctx.planes().iter().filter(| &pl | {
+        match pl.get_properties() {
+            Ok(props) => {
+                match props.iter().find(| &pr | { pr.name() == "type" }) {
+                    Some(pr) => {
+                        match pr.value() {
+                            &Enum(ref en) => en.value() == 0,
+                            _ => false
+                        }
+                    },
+                    None => false
+                }
+            },
+            _ => false
         }
-    }
+    }).collect();
 
-    for &id in resources.planes.iter() {
-        let plane = device.plane(id).unwrap();
+    println!("{:#?}", planes);
 
-        let props = plane.get_property_ids().unwrap();
-        for id in props {
-            let prop = device.property(id);
-            println!("{:#?}", prop);
-        }
-    }
+    let prime_plane = planes.get(0).unwrap();
+
+    println!("{:#?}", prime_plane.get_properties());
+
+    let db = ctx.create_dumbbuffer(1920, 1080, 32).unwrap();
+    ctx.create_framebuffer(&db).unwrap();
 }
 
