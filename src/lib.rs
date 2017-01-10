@@ -32,13 +32,15 @@ extern crate libc;
 mod ffi;
 pub mod result;
 pub mod mode;
+pub mod property;
 
 use result::{Result, Error, ErrorKind};
+use property::*;
 
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
-use std::marker::PhantomData;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::fs::{File, OpenOptions};
+use std::rc::{Rc, Weak};
 use std::borrow::Borrow;
 
 #[cfg(feature="dumbbuffer")]
@@ -51,42 +53,25 @@ pub type ControllerId = ResourceId;
 pub type FramebufferId = ResourceId;
 pub type PlaneId = ResourceId;
 pub type PropertyId = ResourceId;
+pub type ModeId = ResourceId;
 pub type BlobId = ResourceId;
 
-#[derive(Debug)]
-pub struct Context<T> where T: AsRawFd {
-    handle: T,
-    driver_name: String,
-    driver_date: String,
-    driver_desc: String,
-    driver_vers: (i32, i32, i32),
-    connectors: Vec<Connector>,
-    encoders: Vec<Encoder>,
-    controllers: Vec<Controller>,
-    planes: Vec<Plane>
+#[derive(Debug, Clone)]
+struct Device {
+    device: Rc<File>,
+    driver: DriverVersion
 }
 
-impl<T> AsRawFd for Context<T> where T: AsRawFd {
+impl AsRawFd for Device {
     fn as_raw_fd(&self) -> RawFd {
-        self.handle.borrow().as_raw_fd()
+        self.device.as_raw_fd()
     }
 }
 
-impl Context<File> {
-    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Context<File>> {
-        let mut options = OpenOptions::new();
-        options.read(true);
-        options.write(true);
-        let file = options.open(path)?;
-        Self::from_file(file)
-    }
-}
+impl Device {
+    fn from_file(file: File) -> Result<Device> {
+        let fd = file.as_raw_fd();
 
-impl<T> Context<T> where T: AsRawFd {
-    pub fn from_file(file: T) -> Result<Context<T>> {
-        let fd = file.borrow().as_raw_fd();
-
-        // Get the version information from the handle.
         let version = match ffi::get_version(fd) {
             Ok(v) => v,
             Err(Error(e, _)) => match e {
@@ -108,17 +93,64 @@ impl<T> Context<T> where T: AsRawFd {
             Err(_) => "Unknown".to_string()
         };
 
-        // Enable atomic modesetting
+        let driver = DriverVersion {
+            driver_name: driver_name,
+            driver_date: driver_date,
+            driver_desc: driver_desc,
+            driver_vers: version.number,
+        };
+
         if let Err(_) = ffi::enable_atomic(fd) {
             let msg = "handle does not support atomic modesetting";
             return Err(ErrorKind::Unsupported(msg).into());
         }
 
-        // Enable universal planes
         if let Err(_) = ffi::enable_universal_planes(fd) {
             let msg = "handle does not support universal planes";
             return Err(ErrorKind::Unsupported(msg).into());
         }
+
+        let device = Device {
+            device: Rc::new(file),
+            driver: driver
+        };
+
+        Ok(device)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DriverVersion {
+    driver_name: String,
+    driver_date: String,
+    driver_desc: String,
+    driver_vers: (i32, i32, i32),
+}
+
+#[derive(Debug)]
+pub struct Context {
+    device: Device,
+    connectors: Vec<Connector>,
+    encoders: Vec<Encoder>,
+    controllers: Vec<Controller>,
+    planes: Vec<Plane>
+}
+
+impl Context {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Context> {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        options.write(true);
+        let file = options.open(path)?;
+        Self::from_file(file)
+    }
+}
+
+impl Context {
+    pub fn from_file(file: File) -> Result<Context> {
+        let device = Device::from_file(file)?;
+        let fd = device.as_raw_fd();
+        let weak = Rc::downgrade(&device.device);
 
         // Get all static resource ids.
         let cres = ffi::get_card_resources(fd)?;
@@ -129,72 +161,71 @@ impl<T> Context<T> where T: AsRawFd {
             match ffi::get_connector(fd, id) {
                 Ok(c) => {
                     let con = Connector {
-                        fd: fd,
+                        device: (&weak).clone(),
                         id: id,
-                        con_type: ConnectorType::from(c.raw.connector_type),
+                        data: ConnectorType::from(c.raw.connector_type),
                     };
 
                     Some(con)
                 },
                 _ => None
             }
-        });
+        }).collect();
 
         // Load the encoders
         let encoders = cres.encoders.iter().filter_map(| &id | {
             match ffi::get_encoder(fd, id) {
                 Ok(_) => {
                     let enc = Encoder {
-                        fd: fd,
+                        device: (&weak).clone(),
                         id: id,
+                        data: ()
                     };
 
                     Some(enc)
                 },
                 _ => None
             }
-        });
+        }).collect();
 
         // Load the controllers
         let controllers = cres.crtcs.iter().filter_map(| &id | {
             match ffi::get_crtc(fd, id) {
                 Ok(_) => {
                     let con = Controller {
-                        fd: fd,
+                        device: (&weak).clone(),
                         id: id,
+                        data: ()
                     };
 
                     Some(con)
                 },
                 _ => None
             }
-        });
+        }).collect();
 
         // Load the planes.
         let planes = pres.planes.iter().filter_map(| &id  | {
             match ffi::get_plane(fd, id) {
                 Ok(_) => {
                     let pl = Plane {
-                        fd: fd,
+                        device: (&weak).clone(),
                         id: id,
+                        data: ()
                     };
 
                     Some(pl)
                 },
                 _ => None
             }
-        });
+        }).collect();
 
-        let mut ctx = Context {
-            handle: file,
-            driver_name: driver_name,
-            driver_date: driver_date,
-            driver_desc: driver_desc,
-            driver_vers: version.number,
-            connectors: connectors.collect(),
-            encoders: encoders.collect(),
-            controllers: controllers.collect(),
-            planes: planes.collect()
+        let ctx = Context {
+            device: device,
+            connectors: connectors,
+            encoders: encoders,
+            controllers: controllers,
+            planes: planes
         };
 
         Ok(ctx)
@@ -208,63 +239,126 @@ impl<T> Context<T> where T: AsRawFd {
 
     pub fn planes(&self) -> &[Plane] { &self.planes }
 
-    pub fn create_framebuffer<'a, B>(&'a self, buffer: &B) -> Result<Framebuffer<'a>> where B: Buffer {
-        let fd = self.handle.borrow().as_raw_fd();
+    pub fn create_framebuffer<B>(&self, buffer: &B) -> Result<Framebuffer> where B: Buffer {
+        let fd = self.device.as_raw_fd();
         let (width, height) = buffer.borrow().size();
         let raw = try!(ffi::create_framebuffer(fd, width, height, buffer.borrow().pitch(),
                                                buffer.borrow().bpp() as u32,
                                                buffer.borrow().depth() as u32,
                                                buffer.borrow().handle()));
         let fb = Framebuffer {
-            _phantom: PhantomData,
-            fd: fd,
+            device: Rc::downgrade(&self.device.device),
             id: raw.raw.fb_id,
+            data: ()
         };
 
         Ok(fb)
     }
+
+    fn get_props(fd: RawFd, id: ResourceId, obj_type: ffi::ObjectType) -> Result<Vec<Value>> {
+        let (ids, vals) = match ffi::get_resource_properties(fd, id, obj_type) {
+            Ok(p) => (p.prop_ids, p.prop_values),
+            Err(_) => (Vec::new(), Vec::new())
+        };
+
+        let mut props = Vec::new();
+        for (&prop_id, &val) in ids.iter().zip(vals.iter()) {
+            match Self::get_property(fd, id, prop_id, val) {
+                Ok(p) => props.push(p),
+                Err(Error(e, _)) => match e {
+                    e @ ErrorKind::PermissionDenied => bail!(e),
+                    _ => continue
+                }
+            };
+        }
+
+        Ok(props)
+    }
+
+    fn get_property(fd: RawFd, res: ResourceId, id: PropertyId, value: u64) -> Result<Value> {
+        match ffi::get_property(fd, id, value) {
+            Ok(p) => Ok(Value::from((res, p))),
+            Err(Error(e, _)) => match e {
+                e @ ErrorKind::PermissionDenied => bail!(e),
+                _ => {
+                    Ok(Value::Unknown)
+                }
+            }
+        }
+    }
 }
 
-pub struct PropertyUpdate {
+/// An object that implements the `Buffer` trait allows it to be used as a part
+/// of a `Framebuffer`.
+pub trait Buffer {
+    /// The width and height of the buffer.
+    fn size(&self) -> (u32, u32);
+    /// The depth size of the buffer.
+    fn depth(&self) -> u8;
+    /// The number of 'bits per pixel'
+    fn bpp(&self) -> u8;
+    /// The pitch of the buffer.
+    fn pitch(&self) -> u32;
+    /// A handle provided by your graphics driver that can be used to reference
+    /// the buffer, such as a dumb buffer handle or a handle provided by mesa's
+    /// libgbm.
+    fn handle(&self) -> u32;
+}
+
+#[derive(Debug)]
+pub struct Resource<T> {
+    device: Weak<File>,
     id: ResourceId,
-    property: Property
+    data: T
 }
 
-pub trait Resource {
-    fn get_id(&self) -> ResourceId;
-    fn get_properties(&self) -> Result<Vec<Property>>;
+impl<T> Resource<T> {
+    pub fn id(&self) -> ResourceId { self.id }
+
+    pub fn properties(&self) -> Result<Vec<Value>> {
+        let upgraded = Weak::upgrade(&self.device).unwrap();
+        let fd = upgraded.as_raw_fd();
+        Context::get_props(fd, self.id, ffi::ObjectType::Unknown)
+    }
 }
 
-#[derive(Debug)]
-pub struct Connector {
-    fd: RawFd,
-    id: ConnectorId,
-    con_type: ConnectorType,
-}
+pub type Connector = Resource<ConnectorType>;
+pub type Encoder = Resource<()>;
+pub type Controller = Resource<()>;
+pub type Framebuffer = Resource<()>;
+pub type Plane = Resource<()>;
 
-#[derive(Debug)]
-pub struct Encoder {
-    fd: RawFd,
-    id: EncoderId,
-}
+impl Connector {
+    pub fn connector_type(&self) -> ConnectorType {
+        self.data
+    }
 
-#[derive(Debug)]
-pub struct Controller {
-    fd: RawFd,
-    id: ControllerId,
-}
+    pub fn connector_state(&self) -> Result<ConnectorState> {
+        let upgraded = Weak::upgrade(&self.device).unwrap();
+        let fd = upgraded.as_raw_fd();
 
-#[derive(Debug)]
-pub struct Framebuffer<'a> {
-    _phantom: PhantomData<&'a ()>,
-    fd: RawFd,
-    id: FramebufferId,
-}
+        let raw = ffi::get_connector(fd, self.id)?;
 
-#[derive(Debug)]
-pub struct Plane {
-    fd: RawFd,
-    id: PlaneId,
+        let connection = match raw.raw.connection {
+            1 => {
+                let subpixel = match raw.raw.subpixel {
+                    1 => SubPixelType::Unknown,
+                    2 => SubPixelType::HorizontalRGB,
+                    3 => SubPixelType::HorizontalBGR,
+                    4 => SubPixelType::VerticalRGB,
+                    5 => SubPixelType::VerticalBGR,
+                    6 => SubPixelType::None,
+                    _ => SubPixelType::Unknown
+                };
+
+                ConnectorState::Connected(subpixel, (raw.raw.mm_width, raw.raw.mm_height))
+            },
+            2 => ConnectorState::Disconnected,
+            _ => ConnectorState::Unknown
+        };
+
+        Ok(connection)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -314,7 +408,6 @@ impl From<u32> for ConnectorType {
     }
 }
 
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ConnectorState {
     Connected(SubPixelType, (u32, u32)),
@@ -330,313 +423,5 @@ pub enum SubPixelType {
     VerticalRGB,
     VerticalBGR,
     None
-}
-
-impl Connector {
-    pub fn connector_type(&self) -> ConnectorType {
-        self.con_type
-    }
-
-    pub fn connector_state(&self) -> Result<ConnectorState> {
-        let raw = ffi::get_connector(self.fd, self.id)?;
-
-        let connection = match raw.raw.connection {
-            1 => {
-                let subpixel = match raw.raw.subpixel {
-                    2 => SubPixelType::HorizontalRGB,
-                    3 => SubPixelType::HorizontalBGR,
-                    4 => SubPixelType::VerticalRGB,
-                    5 => SubPixelType::VerticalBGR,
-                    6 => SubPixelType::None,
-                    _ => SubPixelType::Unknown
-                };
-
-                ConnectorState::Connected(subpixel, (raw.raw.mm_width, raw.raw.mm_height))
-            },
-            2 => ConnectorState::Disconnected,
-            _ => ConnectorState::Unknown
-        };
-
-        Ok(connection)
-    }
-}
-
-pub trait PropertyInfo<'a, V, P> where P: 'a {
-    fn value(&self) -> V;
-    fn possible(&'a self) -> P;
-}
-
-#[derive(Debug, Clone)]
-pub struct PropertyEnum {
-    value: i64,
-    possible_values: Vec<(i64, String)>
-}
-
-impl<'a> PropertyInfo<'a, i64, &'a [(i64, String)]> for PropertyEnum {
-    fn value(&self) -> i64 {
-        self.value
-    }
-
-    fn possible(&'a self) -> &'a [(i64, String)] {
-        &self.possible_values
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PropertyBlob {
-    id: BlobId,
-    data: Vec<u8>
-}
-
-impl<'a> PropertyInfo<'a, BlobId, ObjectType> for PropertyBlob {
-    fn value(&self) -> BlobId {
-        self.id
-    }
-
-    fn possible(&'a self) -> ObjectType {
-        ObjectType::Blob
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PropertyURange {
-    value: u64,
-    range: (u64, u64)
-}
-
-impl<'a> PropertyInfo<'a, u64, (u64, u64)> for PropertyURange {
-    fn value(&self) -> u64 {
-        self.value
-    }
-
-    fn possible(&'a self) -> (u64, u64) {
-        self.range
-    }
-}
-#[derive(Debug, Clone)]
-pub struct PropertyIRange {
-    value: i64,
-    range: (i64, i64)
-}
-
-impl<'a> PropertyInfo<'a, i64, (i64, i64)> for PropertyIRange {
-    fn value(&self) -> i64 {
-        self.value
-    }
-
-    fn possible(&'a self) -> (i64, i64) {
-        self.range
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct PropertyObject {
-    value: ResourceId,
-    obj_type: ObjectType
-}
-
-impl<'a> PropertyInfo<'a, ResourceId, ObjectType> for PropertyObject {
-    fn value(&self) -> ResourceId {
-        self.value
-    }
-
-    fn possible(&'a self) -> ObjectType {
-        self.obj_type
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ObjectType {
-    Connector,
-    Encoder,
-    Controller,
-    Framebuffer,
-    Plane,
-    Property,
-    Mode,
-    Blob,
-    Unknown
-}
-
-#[derive(Debug, Clone)]
-pub enum PropertyValue {
-    Enum(PropertyEnum),
-    Blob(PropertyBlob),
-    URange(PropertyURange),
-    IRange(PropertyIRange),
-    Object(PropertyObject),
-    Unknown
-}
-
-#[derive(Debug, Clone)]
-pub struct Property {
-    name: String,
-    id: PropertyId,
-    value: PropertyValue,
-    mutable: bool
-}
-
-impl Property {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn value(&self) -> &PropertyValue {
-        &self.value
-    }
-
-    pub fn mutable(&self) -> bool {
-        self.mutable
-    }
-
-    fn get_props(fd: RawFd, id: ResourceId, obj_type: ffi::ObjectType) -> Result<Vec<Property>> {
-        let (ids, vals) = match ffi::get_resource_properties(fd, id, obj_type) {
-            Ok(p) => (p.prop_ids, p.prop_values),
-            Err(_) => (Vec::new(), Vec::new())
-        };
-
-        let mut props = Vec::new();
-        for (&id, &val) in ids.iter().zip(vals.iter()) {
-            match Property::get_property(fd, id, val) {
-                Ok(p) => props.push(p),
-                Err(Error(e, _)) => match e {
-                    e @ ErrorKind::PermissionDenied => bail!(e),
-                    _ => continue
-                }
-            };
-        }
-
-        Ok(props)
-    }
-
-    fn get_property(fd: RawFd, id: PropertyId, value: u64) -> Result<Property> {
-        let property = match ffi::get_property(fd, id, value) {
-            Ok(p) => {
-                let value = match p.value {
-                    ffi::PropertyValue::Enum(e) => {
-                        let prop = PropertyEnum {
-                            value: value as i64,
-                            possible_values: e.enums
-                        };
-
-                        PropertyValue::Enum(prop)
-                    },
-                    ffi::PropertyValue::URange(r) => {
-                        let prop = PropertyURange {
-                            value: value,
-                            range: r.values
-                        };
-
-                        PropertyValue::URange(prop)
-                    },
-                    ffi::PropertyValue::IRange(r) => {
-                        let prop = PropertyIRange {
-                            value: value as i64,
-                            range: r.values
-                        };
-
-                        PropertyValue::IRange(prop)
-                    },
-                    ffi::PropertyValue::Object(o) => {
-                        let prop = PropertyObject {
-                            obj_type: match o.value {
-                                ffi::ObjectType::Connector => ObjectType::Connector,
-                                ffi::ObjectType::Encoder => ObjectType::Encoder,
-                                ffi::ObjectType::Controller => ObjectType::Controller,
-                                ffi::ObjectType::Framebuffer => ObjectType::Framebuffer,
-                                ffi::ObjectType::Plane => ObjectType::Plane,
-                                ffi::ObjectType::Property => ObjectType::Property,
-                                ffi::ObjectType::Mode => ObjectType::Mode,
-                                ffi::ObjectType::Blob => ObjectType::Blob,
-                                ffi::ObjectType::Unknown => ObjectType::Unknown
-                            },
-                            value: value as ResourceId
-                        };
-
-                        PropertyValue::Object(prop)
-                    },
-                    ffi::PropertyValue::Blob(b) => {
-                        let prop = PropertyBlob {
-                            id: b.id as BlobId,
-                            data: b.data
-                        };
-
-                        PropertyValue::Blob(prop)
-                    }
-                };
-                Property {
-                    name: p.name,
-                    id: id,
-                    value: value,
-                    mutable: p.mutable
-                }
-            },
-            Err(Error(e, _)) => match e {
-                e @ErrorKind::PermissionDenied => bail!(e),
-                _ => {
-                    Property {
-                        name: "Unknown".to_string(),
-                        id: id,
-                        value: PropertyValue::Unknown,
-                        mutable: false
-                    }
-                }
-            }
-        };
-
-        Ok(property)
-    }
-}
-
-impl Resource for Connector {
-    fn get_id(&self) -> ConnectorId { self.id }
-    fn get_properties(&self) -> Result<Vec<Property>> {
-        Property::get_props(self.fd, self.id, ffi::ObjectType::Connector)
-    }
-}
-
-impl Resource for Encoder {
-    fn get_id(&self) -> EncoderId { self.id }
-    fn get_properties(&self) -> Result<Vec<Property>> {
-        Property::get_props(self.fd, self.id, ffi::ObjectType::Encoder)
-    }
-}
-
-impl Resource for Controller {
-    fn get_id(&self) -> ControllerId { self.id }
-    fn get_properties(&self) -> Result<Vec<Property>> {
-        Property::get_props(self.fd, self.id, ffi::ObjectType::Controller)
-    }
-}
-
-impl<'a> Resource for Framebuffer<'a> {
-    fn get_id(&self) -> FramebufferId { self.id }
-    fn get_properties(&self) -> Result<Vec<Property>> {
-        Property::get_props(self.fd, self.id, ffi::ObjectType::Framebuffer)
-    }
-}
-
-impl Resource for Plane {
-    fn get_id(&self) -> PlaneId { self.id }
-    fn get_properties(&self) -> Result<Vec<Property>> {
-        Property::get_props(self.fd, self.id, ffi::ObjectType::Plane)
-    }
-}
-
-/// An object that implements the `Buffer` trait allows it to be used as a part
-/// of a `Framebuffer`.
-pub trait Buffer {
-    /// The width and height of the buffer.
-    fn size(&self) -> (u32, u32);
-    /// The depth size of the buffer.
-    fn depth(&self) -> u8;
-    /// The number of 'bits per pixel'
-    fn bpp(&self) -> u8;
-    /// The pitch of the buffer.
-    fn pitch(&self) -> u32;
-    /// A handle provided by your graphics driver that can be used to reference
-    /// the buffer, such as a dumb buffer handle or a handle provided by mesa's
-    /// libgbm.
-    fn handle(&self) -> u32;
 }
 

@@ -4,7 +4,7 @@ use std::{u64, i64};
 use std::os::unix::io::RawFd;
 use std::io::Error as IoError;
 use libc::ioctl;
-use ::result::{Result, Error, ErrorKind};
+use ::result::{Result, ErrorKind};
 
 use super::*;
 
@@ -14,6 +14,45 @@ macro_rules! ioctl {
             return Err(IoError::last_os_error().into());
         }
     })
+}
+
+impl drm_mode_get_property {
+    pub fn name(&self) -> String {
+        let cstr = unsafe { CStr::from_ptr(&self.name as *const _) };
+        let name = match cstr.to_str() {
+            Ok(n) => n,
+            Err(_) => "Unknown"
+        };
+        name.to_string()
+    }
+
+    pub fn mutable(&self) -> bool {
+        (self.flags & DRM_MODE_PROP_IMMUTABLE) == 0
+    }
+
+    pub fn pending(&self) -> bool {
+        (self.flags & DRM_MODE_PROP_PENDING) == 1
+    }
+
+    pub fn is_enum(&self) -> bool {
+        (self.flags & (DRM_MODE_PROP_ENUM | DRM_MODE_PROP_BITMASK)) != 0
+    }
+
+    pub fn blob(&self) -> bool {
+        (self.flags & DRM_MODE_PROP_BLOB) != 0
+    }
+
+    pub fn urange(&self) -> bool {
+        (self.flags & DRM_MODE_PROP_RANGE) != 0
+    }
+
+    pub fn irange(&self) -> bool {
+        (self.flags & MACRO_DRM_MODE_PROP_SIGNED_RANGE) != 0
+    }
+
+    pub fn object(&self) -> bool {
+        (self.flags & MACRO_DRM_MODE_PROP_OBJECT) != 0
+    }
 }
 
 #[derive(Debug)]
@@ -62,37 +101,6 @@ pub fn get_resource_properties(fd: RawFd, id: u32, obj_type: ObjectType) -> Resu
 pub type PropertyEnumVal = (i64, String);
 
 #[derive(Debug)]
-pub struct PropertyEnum {
-    pub values: Vec<i64>,
-    pub enums: Vec<PropertyEnumVal>
-}
-
-// TODO: Unsure how to handle this yet
-#[derive(Debug)]
-pub struct PropertyBlob {
-    pub id: u64,
-    pub data: Vec<u8>
-}
-
-// TODO: Unsure how to handle this yet
-#[derive(Debug)]
-pub struct PropertyURange {
-    pub values: (u64, u64)
-}
-
-// TODO: Unsure how to handle this yet
-#[derive(Debug)]
-pub struct PropertyIRange {
-    pub values: (i64, i64)
-}
-
-// TODO: Unsure how to handle this yet
-#[derive(Debug)]
-pub struct PropertyObject {
-    pub value: ObjectType
-}
-
-#[derive(Debug)]
 pub enum ObjectType {
     Connector,
     Encoder,
@@ -106,6 +114,22 @@ pub enum ObjectType {
 }
 
 #[derive(Debug)]
+pub struct Property<V, P> {
+    pub raw: drm_mode_get_property,
+    pub name: String,
+    pub mutable: bool,
+    pub pending: bool,
+    pub value: V,
+    pub possible: P
+}
+
+pub type PropertyEnum = Property<i64, Vec<PropertyEnumVal>>;
+pub type PropertyBlob = Property<(u64, Vec<u8>), ObjectType>;
+pub type PropertyURange = Property<u64, (u64, u64)>;
+pub type PropertyIRange = Property<i64, (i64, i64)>;
+pub type PropertyObject = Property<i64, ObjectType>;
+
+#[derive(Debug)]
 pub enum PropertyValue {
     Enum(PropertyEnum),
     Blob(PropertyBlob),
@@ -114,72 +138,28 @@ pub enum PropertyValue {
     Object(PropertyObject)
 }
 
-#[derive(Debug)]
-pub struct Property {
-    pub raw: drm_mode_get_property,
-    pub name: String,
-    pub mutable: bool,
-    pub pending: bool,
-    pub value: PropertyValue
-}
-
-pub fn get_property(fd: RawFd, id: u32, val: u64) -> Result<Property> {
+pub fn get_property(fd: RawFd, id: u32, val: u64) -> Result<PropertyValue> {
     let mut raw: drm_mode_get_property = unsafe { mem::zeroed() };
     raw.prop_id = id;
     ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, &raw);
 
     // Check if the properties are in enums or blobs
-    let value =
-        if (raw.flags & (DRM_MODE_PROP_ENUM | DRM_MODE_PROP_BITMASK)) != 0 {
-            new_enum(fd, &mut raw)
-        } else if (raw.flags & DRM_MODE_PROP_BLOB) != 0 {
-            match new_blob(fd, val) {
-                Ok(b) => Ok(b),
-                Err(Error(e, n)) => match e {
-                    ErrorKind::PermissionDenied => Err(Error(e, n)),
-                    _ => {
-                        let blob = PropertyBlob {
-                            id: val,
-                            data: Vec::new()
-                        };
-                        Ok(PropertyValue::Blob(blob))
-                    }
-                }
-            }
-        } else if (raw.flags & DRM_MODE_PROP_RANGE) != 0 {
-            new_urange(fd, &mut raw)
-        } else if (raw.flags & MACRO_DRM_MODE_PROP_SIGNED_RANGE) != 0 {
-            new_irange(fd, &mut raw)
-        } else if (raw.flags & MACRO_DRM_MODE_PROP_OBJECT) != 0 {
-            new_object(fd, &mut raw)
-        } else {
-            return Err(ErrorKind::UnknownPropertyType(raw.flags).into());
-        };
-
-    let value = match value {
-        Ok(v) => v,
-        Err(e) => bail!(e)
-    };
-
-    let cstr = unsafe { CStr::from_ptr(&raw.name as *const _) };
-    let name = match cstr.to_str() {
-        Ok(n) => n,
-        Err(_) => "Unknown"
-    };
-
-    let prop = Property {
-        raw: raw,
-        name: name.to_string(),
-        mutable: (raw.flags & DRM_MODE_PROP_IMMUTABLE) == 0,
-        pending: (raw.flags & DRM_MODE_PROP_PENDING) == 1,
-        value: value
-    };
-
-
-    Ok(prop)
+    if raw.is_enum() {
+        new_enum(fd, raw, val as i64)
+    } else if raw.blob() {
+        new_blob(fd, raw, val as u64)
+    } else if raw.urange() {
+        new_urange(fd, raw, val as u64)
+    } else if raw.irange() {
+        new_irange(fd, raw, val as i64)
+    } else if raw.object() {
+        new_object(fd, raw, val as i64)
+    } else {
+        Err(ErrorKind::UnknownPropertyType(raw.flags).into())
+    }
 }
 
-fn new_enum(fd: RawFd, raw: &mut drm_mode_get_property) -> Result<PropertyValue> {
+fn new_enum(fd: RawFd, mut raw: drm_mode_get_property, value: i64) -> Result<PropertyValue> {
     // Create buffers to hold the data
     let mut values: Vec<i64> =
         vec![unsafe { mem::zeroed() }; raw.count_values as usize];
@@ -190,10 +170,10 @@ fn new_enum(fd: RawFd, raw: &mut drm_mode_get_property) -> Result<PropertyValue>
     raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
     raw.enum_blob_ptr = enums.as_mut_slice().as_mut_ptr() as u64;
 
-    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, raw);
+    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, &raw);
 
     // Collect the enums into a list of EnumPropertyValues
-    let enums = enums.iter().map(| &en | {
+    let enums: Vec<_> = enums.iter().map(| &en | {
         let cstr = unsafe { CStr::from_ptr(&en.name as *const _) };
         let name = match cstr.to_str() {
             Ok(n) => n,
@@ -203,17 +183,21 @@ fn new_enum(fd: RawFd, raw: &mut drm_mode_get_property) -> Result<PropertyValue>
     }).collect();
 
     let prop = PropertyEnum {
-        values: values,
-        enums: enums
+        raw: raw,
+        name: raw.name(),
+        mutable: raw.mutable(),
+        pending: raw.pending(),
+        value: value,
+        possible: enums
     };
 
     Ok(PropertyValue::Enum(prop))
 }
 
 // TODO: Currently does not work. Need to figure out where blob ids are stored.
-fn new_blob(fd: RawFd, id: u64) -> Result<PropertyValue> {
+fn new_blob(fd: RawFd, raw: drm_mode_get_property, value: u64) -> Result<PropertyValue> {
     let mut raw_blob: drm_mode_get_blob = unsafe { mem::zeroed() };
-    raw_blob.blob_id = id as u32;
+    raw_blob.blob_id = value as u32;
 
     ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPBLOB, &raw_blob);
 
@@ -225,60 +209,74 @@ fn new_blob(fd: RawFd, id: u64) -> Result<PropertyValue> {
     ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPBLOB, &raw_blob);
 
     let prop = PropertyBlob {
-        id: id,
-        data: data
+        raw: raw,
+        name: raw.name(),
+        mutable: raw.mutable(),
+        pending: raw.pending(),
+        value: (value, data),
+        possible: ObjectType::Blob
     };
 
     Ok(PropertyValue::Blob(prop))
 }
 
-fn new_urange(fd: RawFd, raw: &mut drm_mode_get_property) -> Result<PropertyValue> {
+fn new_urange(fd: RawFd, mut raw: drm_mode_get_property, value: u64) -> Result<PropertyValue> {
     let mut values: Vec<u64> =
         vec![unsafe { mem::zeroed() }; raw.count_values as usize];
 
     raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
 
-    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, raw);
+    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, &raw);
 
     let &min = values.get(0).unwrap_or(&0);
     let &max = values.get(1).unwrap_or(&u64::MAX);
 
     let prop = PropertyURange {
-        values: (min, max)
+        raw: raw,
+        name: raw.name(),
+        mutable: raw.mutable(),
+        pending: raw.pending(),
+        value: value,
+        possible: (min, max)
     };
 
     Ok(PropertyValue::URange(prop))
 }
 
-fn new_irange(fd: RawFd, raw: &mut drm_mode_get_property) -> Result<PropertyValue> {
+fn new_irange(fd: RawFd, mut raw: drm_mode_get_property, value: i64) -> Result<PropertyValue> {
     let mut values: Vec<i64> =
         vec![unsafe { mem::zeroed() }; raw.count_values as usize];
 
     raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
 
-    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, raw);
+    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, &raw);
 
     let &min = values.get(0).unwrap_or(&i64::MIN);
     let &max = values.get(1).unwrap_or(&i64::MAX);
 
     let prop = PropertyIRange {
-        values: (min, max)
+        raw: raw,
+        name: raw.name(),
+        mutable: raw.mutable(),
+        pending: raw.pending(),
+        value: value,
+        possible: (min, max)
     };
 
     Ok(PropertyValue::IRange(prop))
 }
 
-fn new_object(fd: RawFd, raw: &mut drm_mode_get_property) -> Result<PropertyValue> {
+fn new_object(fd: RawFd, mut raw: drm_mode_get_property, value: i64) -> Result<PropertyValue> {
     let mut values: Vec<u32> =
         vec![unsafe { mem::zeroed() }; raw.count_values as usize];
 
     raw.values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
 
-    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, raw);
+    ioctl!(fd, MACRO_DRM_IOCTL_MODE_GETPROPERTY, &raw);
 
-    let &val = values.get(0).unwrap_or(&0);
+    let &ty = values.get(0).unwrap_or(&0);
 
-    let obj_type = match val {
+    let obj_type = match ty {
         DRM_MODE_OBJECT_CONNECTOR => ObjectType::Connector,
         DRM_MODE_OBJECT_ENCODER => ObjectType::Encoder,
         DRM_MODE_OBJECT_MODE => ObjectType::Mode,
@@ -291,7 +289,12 @@ fn new_object(fd: RawFd, raw: &mut drm_mode_get_property) -> Result<PropertyValu
     };
 
     let prop = PropertyObject {
-        value: obj_type
+        raw: raw,
+        name: raw.name(),
+        mutable: raw.mutable(),
+        pending: raw.pending(),
+        value: value,
+        possible: obj_type
     };
 
     Ok(PropertyValue::Object(prop))
