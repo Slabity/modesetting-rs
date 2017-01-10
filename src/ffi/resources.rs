@@ -200,8 +200,3 @@ pub fn get_plane(fd: RawFd, id: u32) -> Result<Plane> {
     let plane = Plane { raw: raw };
     Ok(plane)
 }
-
-#[derive(Debug)]
-pub struct AtomicRequest {
-    pub raw: drm_mode_atomic
-}

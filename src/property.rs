@@ -4,6 +4,7 @@ use ::Resource;
 use ::ResourceId;
 use ::PropertyId;
 use ::BlobId;
+use ::PropertyUpdate;
 
 #[derive(Debug, Clone)]
 pub struct Property<V, P> {
@@ -266,10 +267,4 @@ impl<'a, T> Update<&'a Resource<T>> for Object {
     }
 }
 
-#[derive(Debug)]
-pub struct PropertyUpdate {
-    resource: ResourceId,
-    property: PropertyId,
-    value: i64
-}
 

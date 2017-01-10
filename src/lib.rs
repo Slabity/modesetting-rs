@@ -144,9 +144,7 @@ impl Context {
         let file = options.open(path)?;
         Self::from_file(file)
     }
-}
 
-impl Context {
     pub fn from_file(file: File) -> Result<Context> {
         let device = Device::from_file(file)?;
         let fd = device.as_raw_fd();
@@ -253,6 +251,18 @@ impl Context {
         };
 
         Ok(fb)
+    }
+
+    pub fn commit<'a, T>(&self, updates: T) -> Result<()>
+        where T: Iterator<Item=&'a PropertyUpdate> {
+        let fd = self.device.as_raw_fd();
+        let updates: Vec<_> = updates.map(| u | *u).collect();
+
+        let objs = updates.iter().map(| u | u.resource as u32).collect();
+        let props = updates.iter().map(| u | u.property as u32).collect();
+        let vals = updates.iter().map(| u | u.value as u64).collect();
+
+        ffi::atomic_commit(fd, objs, props, vals)
     }
 
     fn get_props(fd: RawFd, id: ResourceId, obj_type: ffi::ObjectType) -> Result<Vec<Value>> {
@@ -423,5 +433,12 @@ pub enum SubPixelType {
     VerticalRGB,
     VerticalBGR,
     None
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct PropertyUpdate {
+    resource: ResourceId,
+    property: PropertyId,
+    value: i64
 }
 
