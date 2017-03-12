@@ -1,5 +1,6 @@
-#include <libdrm/drm.h>
-#include <libdrm/drm_mode.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <xf86drmMode.h>
 
 const unsigned int MACRO_DRM_MODE_PROP_EXTENDED_TYPE    = DRM_MODE_PROP_EXTENDED_TYPE;
 const unsigned int MACRO_DRM_MODE_PROP_OBJECT           = DRM_MODE_PROP_OBJECT;

@@ -1,4 +1,5 @@
-use super::ffi;
+use ::ffi;
+use ::AsBlob;
 
 use std::ffi::CStr;
 
@@ -64,5 +65,37 @@ impl Into<ffi::drm_mode_modeinfo> for Mode {
             flags: self.flags,
             type_: self.mode_type
         }
+    }
+}
+
+impl AsBlob<ffi::drmModeModeInfo> for Mode {
+    fn as_blob(&self) -> ffi::drmModeModeInfo {
+        let (hdisplay, vdisplay) = self.display;
+        let (hsync_start, hsync_end) = self.hsync;
+        let (vsync_start, vsync_end) = self.vsync;
+
+        let mut raw = ffi::drmModeModeInfo {
+            clock: self.clock,
+            hdisplay: hdisplay,
+            hsync_start: hsync_start,
+            hsync_end: hsync_end,
+            htotal: self.htotal,
+            hskew: self.hskew,
+            vdisplay: vdisplay,
+            vsync_start: vsync_start,
+            vsync_end: vsync_end,
+            vtotal: self.vtotal,
+            vscan: self.vscan,
+            vrefresh: self.vrefresh,
+            flags: self.flags,
+            type_: self.mode_type,
+            name: [0; 32],
+        };
+
+        for (c, b) in self.name.chars().zip(raw.name.iter_mut()) {
+            *b = c as i8;
+        }
+
+        raw
     }
 }

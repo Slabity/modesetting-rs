@@ -28,6 +28,7 @@
 #[macro_use]
 extern crate error_chain;
 extern crate libc;
+extern crate itertools;
 
 mod ffi;
 pub mod result;
@@ -35,13 +36,19 @@ pub mod mode;
 pub mod property;
 
 use result::{Result, Error, ErrorKind};
-use property::*;
+use property::Value;
+use mode::*;
 
 use std::path::Path;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::fs::{File, OpenOptions};
 use std::rc::{Rc, Weak};
 use std::borrow::Borrow;
+use std::slice::from_raw_parts;
+use std::collections::HashMap;
+use std::mem::size_of;
+
+use itertools::Itertools;
 
 #[cfg(feature="dumbbuffer")]
 mod dumbbuffer;
@@ -126,6 +133,7 @@ pub struct DriverVersion {
     driver_desc: String,
     driver_vers: (i32, i32, i32),
 }
+
 
 #[derive(Debug)]
 pub struct Context {
@@ -253,16 +261,42 @@ impl Context {
         Ok(fb)
     }
 
+    pub fn create_blob<B, T>(&self, blob: &B) -> Result<Blob> where B: AsBlob<T> {
+        let fd = self.device.as_raw_fd();
+        let blob_data = blob.as_blob();
+        let len = size_of::<T>();
+        let ptr = &blob_data as *const _ as *const u8;
+        let slice = unsafe { from_raw_parts(ptr, len) };
+        let raw = try!(ffi::create_blob(fd, slice));
+
+        let blob = Blob {
+            device: Rc::downgrade(&self.device.device),
+            id: raw.raw.blob_id,
+            data: ()
+        };
+
+        Ok(blob)
+    }
+
     pub fn commit<'a, T>(&self, updates: T) -> Result<()>
         where T: Iterator<Item=&'a PropertyUpdate> {
         let fd = self.device.as_raw_fd();
-        let updates: Vec<_> = updates.map(| u | *u).collect();
 
-        let objs = updates.iter().map(| u | u.resource as u32).collect();
-        let props = updates.iter().map(| u | u.property as u32).collect();
-        let vals = updates.iter().map(| u | u.value as u64).collect();
+        let mut hashmap = HashMap::new();
+        for update in updates {
+            let v = hashmap.entry(update.resource).or_insert(Vec::new());
+            v.push((update.property, update.value));
+        }
 
-        ffi::atomic_commit(fd, objs, props, vals)
+        let updates: Vec<_> = hashmap.iter().collect();
+        let objs: Vec<_> = updates.iter().map(| &(res, _) | *res).collect();
+        let count_props: Vec<_> = updates.iter().map(| &(_, ref ups) | ups.len() as u32).collect();
+        let changes: Vec<_> = updates.into_iter().map(| (_, ref ups) | *ups).flatten().collect();
+        let props: Vec<_> = changes.iter().map(| &&(p, _) | p).collect();
+        let vals: Vec<_> = changes.iter().map(| &&(_, v) | v).collect();
+
+
+        ffi::atomic_commit(fd, objs, count_props, props, vals)
     }
 
     fn get_props(fd: RawFd, id: ResourceId, obj_type: ffi::ObjectType) -> Result<Vec<Value>> {
@@ -315,6 +349,10 @@ pub trait Buffer {
     fn handle(&self) -> u32;
 }
 
+pub trait AsBlob<T> {
+    fn as_blob(&self) -> T;
+}
+
 #[derive(Debug)]
 pub struct Resource<T> {
     device: Weak<File>,
@@ -337,6 +375,7 @@ pub type Encoder = Resource<()>;
 pub type Controller = Resource<()>;
 pub type Framebuffer = Resource<()>;
 pub type Plane = Resource<()>;
+pub type Blob = Resource<()>;
 
 impl Connector {
     pub fn connector_type(&self) -> ConnectorType {
@@ -346,7 +385,6 @@ impl Connector {
     pub fn connector_state(&self) -> Result<ConnectorState> {
         let upgraded = Weak::upgrade(&self.device).unwrap();
         let fd = upgraded.as_raw_fd();
-
         let raw = ffi::get_connector(fd, self.id)?;
 
         let connection = match raw.raw.connection {
@@ -368,6 +406,15 @@ impl Connector {
         };
 
         Ok(connection)
+    }
+
+    pub fn modes(&self) -> Result<Vec<Mode>> {
+        let upgraded = Weak::upgrade(&self.device).unwrap();
+        let fd = upgraded.as_raw_fd();
+        let raw = ffi::get_connector(fd, self.id)?;
+
+        let modes = raw.modes.into_iter().map(| m | Mode::from(m));
+        Ok(modes.collect())
     }
 }
 
@@ -435,10 +482,18 @@ pub enum SubPixelType {
     None
 }
 
+impl Blob {
+    pub fn data() -> Vec<u8> {
+        Vec::new()
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct PropertyUpdate {
     resource: ResourceId,
     property: PropertyId,
     value: i64
 }
+
+
 

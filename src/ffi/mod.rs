@@ -154,17 +154,15 @@ pub struct AtomicRequest {
     pub values: Vec<u64>
 }
 
-pub fn atomic_commit(fd: RawFd, mut objects: Vec<u32>, mut props: Vec<u32>,
-                     mut values: Vec<u64>) -> Result<()> {
+pub fn atomic_commit(fd: RawFd, mut objects: Vec<u32>, mut count_props: Vec<u32>,
+                     mut props: Vec<u32>, mut vals: Vec<i64>) -> Result<()> {
     let mut raw: drm_mode_atomic = unsafe { mem::zeroed() };
-    let mut count_props = props.len();
-    raw.count_objs = objects.len() as u32;
-    raw.count_props_ptr = &mut count_props as *mut _ as u64;
 
+    raw.count_objs = objects.len() as u32;
+    raw.count_props_ptr = count_props.as_mut_slice().as_mut_ptr() as *mut _ as u64;
     raw.objs_ptr = objects.as_mut_slice().as_mut_ptr() as u64;
     raw.props_ptr = props.as_mut_slice().as_mut_ptr() as u64;
-    raw.prop_values_ptr = values.as_mut_slice().as_mut_ptr() as u64;
-
+    raw.prop_values_ptr = vals.as_mut_slice().as_mut_ptr() as u64;
     raw.flags = MACRO_DRM_MODE_ATOMIC_ALLOW_MODESET;
 
     ioctl!(fd, MACRO_DRM_IOCTL_MODE_ATOMIC, &raw);

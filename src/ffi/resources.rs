@@ -189,6 +189,20 @@ pub fn create_framebuffer(fd: RawFd, width: u32, height: u32, pitch: u32,
 }
 
 #[derive(Debug)]
+pub struct Blob {
+    pub raw: drm_mode_create_blob
+}
+
+pub fn create_blob(fd: RawFd, data: &[u8]) -> Result<Blob> {
+    let mut raw: drm_mode_create_blob = unsafe { mem::zeroed() };
+    raw.length = data.len() as u32;
+    raw.data = data.as_ptr() as u64;
+    ioctl!(fd, MACRO_DRM_IOCTL_MODE_CREATEPROPBLOB, &raw);
+    let blob = Blob { raw: raw };
+    Ok(blob)
+}
+
+#[derive(Debug)]
 pub struct Plane {
     pub raw: drm_mode_get_plane
 }

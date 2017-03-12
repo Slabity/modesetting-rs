@@ -169,6 +169,16 @@ impl From<ffi::PropertyBlob> for Blob {
     }
 }
 
+impl<'a> Update<&'a ::Blob> for Blob {
+    fn update(&self, value: &'a ::Blob) -> PropertyUpdate {
+        PropertyUpdate {
+            resource: self.parent,
+            property: self.id,
+            value: value.id() as i64
+        }
+    }
+}
+
 impl From<ffi::PropertyURange> for URange {
     fn from(raw: ffi::PropertyURange) -> URange {
         URange {

@@ -1,0 +1,12 @@
+[package]
+name = "libdrm"
+description = "A reimplementation of the libdrm middleware library"
+version = "0.1.0"
+authors = ["Tyler Slabinski <tslabinski@slabity.net>"]
+
+[dependencies]
+libc = "0.2.20"
+drm-sys = "0.0.2"
+smallvec = "0.3.1"
+error-chain = "0.10.0"
+
