@@ -1,9 +1,14 @@
 extern crate libdrm;
 
-use libdrm::Card;
+use libdrm::Device;
+use libdrm::DRMDevice;
+use libdrm::ClientCapability;
+use libdrm::control::Control;
 
 use std::fs::File;
 use std::fs::OpenOptions;
+
+use std::thread::sleep_ms;
 
 #[test]
 fn enumerate() {
@@ -12,11 +17,13 @@ fn enumerate() {
     options.write(true);
     let file = options.open("/dev/dri/card0").unwrap();
 
-    let mut card: Card<File> = Card::from(file);
+    let mut card: Device<_> = Device::from(file);
 
-    let res = card.resource_ids();
-    let ver = card.version_info();
-    let bid = card.get_bus_id();
+    println!("{:?}", card.magic());
 
-    println!("{:#?}", bid);
+    println!("{:?}", card.set_client_cap(ClientCapability::Stereo3D, true));
+    println!("{:?}", card.set_client_cap(ClientCapability::UniversalPlanes, true));
+    println!("{:?}", card.set_client_cap(ClientCapability::Atomic, true));
+
+    println!("{:#?}", card.resource_ids());
 }

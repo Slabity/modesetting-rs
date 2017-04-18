@@ -1,10 +1,13 @@
-pub const SM_SIZE: usize = 32;
-
 pub use libc::{ioctl, c_void, c_char};
 pub use std::io::Error as IoctlError;
 pub use std::mem;
 
-pub type Buffer<T> = [T; SM_SIZE];
+// We will use this type as a buffer.
+//
+// This is a temporary solution until alloca support is enabled:
+// https://github.com/rust-lang/rfcs/pull/1909
+pub const SM_SIZE: usize = 32;
+pub type Buffer<T> = Vec<T>;
 
 macro_rules! ioctl {
     ( $card:expr, $code:expr, $obj:expr ) => ( unsafe {
@@ -15,17 +18,13 @@ macro_rules! ioctl {
 }
 
 macro_rules! ptr_buffers {
-    ( $($buf:ident = ($ptr:expr, $count:expr, $max:expr, $bty:ty);)* ) => (
+    ( $($buf:ident = ($ptr:expr, $sz:expr, $bty:ty);)* ) => (
         $(
-            let bsize = if $count > $max {
-                $max
-            } else {
-                $count
+            let mut $buf: Buffer<$bty> = unsafe {
+                vec![mem::zeroed(); $sz]
             };
 
-            let mut $buf: Buffer<$bty> = Default::default();
-
-            *$ptr = unsafe {
+            *(&mut $ptr) = unsafe {
                 mem::transmute($buf.as_mut_ptr())
             };
         )*

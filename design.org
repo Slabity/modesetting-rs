@@ -1,0 +1,243 @@
+* Design goals:
+1. Provide the same functionality as mesa's libdrm library
+2. Use RAII paradigms as much as possible.
+3. Constant memory footprint. Try not to allocate on the heap at all.
+4. Provide detailed error information for the end-user.
+5. Do not force the data-structures or means of access to system resources.
+6. Use static dispatch over dynamic dispatch as much as possible.
+7. Provide functionality for all kinds of systems, including ones using or not
+   using dbus, logind, and udev.
+
+* The DRM Card
+DRM card is usually /dev/dri/card*, but we won't restrict the user. We will
+allow them to open it up anything that implements AsRawFd. 
+
+NOTE: Perhaps we want the card to always maintain ownership? Maybe IntoRawFd is
+a better choice?
+
+** Unprivileged calls (any program)
+
++ drmGetVersion
++ drmLibVersion (only returns 1.3.0)
++ drmGetCap
++ drmGetMagic
++ drmGetBusId
++ drmGetInterruptFromBusId
++ drmGetMap
++ drmGetClient
++ drmGetStats
++ drmSetInterfaceVersion
++ drmCommand[None, Read, Write, WriteRead]
+
+** Privileged calls (needs root and/or MASTER)
+
++ drmSetBusId
++ drmAuthMagic
+
+*** Mapping and context functions.
+
++ drmAddMap
++ drmRmMap
++ drmAddContextPrivateMapping
++ ...
+
+*** AGP functions
+
++ drmAgpAcquire
++ drmAgpRelease
++ drmAgpEnable
++ ...
+
+** Modesetting
+
++ drmModeGetResources
++ drmModeGet[Connector, FB, Crtc, Encoder, Plane, Cursor]
++ drmModeObjectProperties
+
+
+* Authentication
+
+A program can have certain permissions granted by the kernel
+
+** Unlocked
+
+Any process can perform these
+
+** Root
+
+Only root (or any CAP_SYS_ADMIN) process can perform this
+
+** DRM Master
+
+Only a single process with DRM Master can perform this
+
+** Control client
+
+Only nodes with control capabilities can perform this
+
+** Render client
+
+Only nodes with render capabilities can perform this
+
+** Auth client
+
+Only authenticated or render clients
+
+* List of ioctls
+** Information and basic
+*** Unlocked
+    (GET_UNIQUE, drm_getunique, 0), // Returns bus id. Deprecated.
+    (GET_MAGIC, drm_getmagic, UNLOCKED), // Returns unique magic token for process
+    (GET_CLIENT, drm_getclient, UNLOCKED), // Deprecated
+    (GET_STATS, drm_getstats, UNLOCKED),
+    (SET_CLIENT_CAP, drm_setclientcap, 0),
+	  (WAIT_VBLANK, drm_wait_vblank, UNLOCKED),
+*** Render
+    (GET_CAP, drm_getcap, UNLOCKED | RENDER),
+*** Render and control
+	  (VERSION, drm_version, UNLOCKED | RENDER | CONTROL),
+*** Master
+    (SET_VERSION, drm_setversion, MASTER),
+*** Master and authenticated
+    (AUTH_MAGIC, drm_authmagic, AUTH | UNLOCKED | MASTER),
+*** Master and root
+    (IRQ_BUSID, drm_irq_by_busid, MASTER | ROOT),
+*** Master, root, and authenticated
+    (SET_UNIQUE, drm_invalid_op, AUTH | MASTER | ROOT), // Deprecated
+    (BLOCK, drm_noop, AUTH | MASTER | ROOT),
+    (UNBLOCK, drm_noop, AUTH | MASTER | ROOT),
+*** Root
+    (SET_MASTER, drm_setmaster_ioctl, UNLOCKED | ROOT),
+    (DROP_MASTER, drm_dropmaster_ioctl, UNLOCKED | ROOT),
+
+** Legacy?
+	(ADD_MAP, drm_legacy_addmap_ioctl, AUTH | MASTER | ROOT),
+	(RM_MAP, drm_legacy_rmmap_ioctl, AUTH),
+	(SET_SAREA_CTX, drm_legacy_setsareactx, AUTH | MASTER | ROOT),
+	(GET_SAREA_CTX, drm_legacy_getsareactx, AUTH),
+	(ADD_CTX, drm_legacy_addctx, AUTH | ROOT),
+	(RM_CTX, drm_legacy_rmctx, AUTH | MASTER | ROOT),
+	(MOD_CTX, drm_noop, AUTH | MASTER | ROOT),
+	(GET_CTX, drm_legacy_getctx, AUTH),
+	(SWITCH_CTX, drm_legacy_switchctx, AUTH | MASTER | ROOT),
+	(NEW_CTX, drm_legacy_newctx, AUTH | MASTER | ROOT),
+	(RES_CTX, drm_legacy_resctx, AUTH),
+	(LOCK, drm_legacy_lock, AUTH),
+	(UNLOCK, drm_legacy_unlock, AUTH),
+	(ADD_BUFS, drm_legacy_addbufs, AUTH | MASTER | ROOT),
+	(MARK_BUFS, drm_legacy_markbufs, AUTH | MASTER | ROOT),
+	(INFO_BUFS, drm_legacy_infobufs, AUTH),
+	(MAP_BUFS, drm_legacy_mapbufs, AUTH),
+	(FREE_BUFS, drm_legacy_freebufs, AUTH),
+	(DMA, drm_legacy_dma_ioctl, AUTH),
+	(SG_ALLOC, drm_legacy_sg_alloc, AUTH | MASTER | ROOT),
+	(SG_FREE, drm_legacy_sg_free, AUTH | MASTER | ROOT),
+  (GET_MAP, drm_legacy_getmap_ioctl, UNLOCKED),
+
+** Drawing
+*** Master, root, and authenticated
+    (ADD_DRAW, drm_noop, AUTH | MASTER | ROOT),
+    (RM_DRAW, drm_noop, AUTH | MASTER | ROOT),
+    (UPDATE_DRAW, drm_noop, AUTH | MASTER | ROOT),
+*** Authenticated
+    (FINISH, drm_noop, AUTH),
+
+** Unknown
+	(CONTROL, drm_control, AUTH | MASTER | ROOT),
+	(PRIME_HANDLE_TO_FD, drm_prime_handle_to_fd_ioctl, AUTH | UNLOCKED | RENDER),
+	(PRIME_FD_TO_HANDLE, drm_prime_fd_to_handle_ioctl, AUTH | UNLOCKED | RENDER),
+	(MODESET_CTL, drm_modeset_ctl, 0),
+
+** AGP
+*** Master, root, and authenticated
+    (AGP_ACQUIRE, drm_agp_acquire_ioctl, AUTH | MASTER | ROOT),
+    (AGP_RELEASE, drm_agp_release_ioctl, AUTH | MASTER | ROOT),
+    (AGP_ENABLE, drm_agp_enable_ioctl, AUTH | MASTER | ROOT),
+    (AGP_ALLOC, drm_agp_alloc_ioctl, AUTH | MASTER | ROOT),
+    (AGP_FREE, drm_agp_free_ioctl, AUTH | MASTER | ROOT),
+    (AGP_BIND, drm_agp_bind_ioctl, AUTH | MASTER | ROOT),
+    (AGP_UNBIND, drm_agp_unbind_ioctl, AUTH | MASTER | ROOT),
+*** Authenticated
+    (AGP_INFO, drm_agp_info_ioctl, AUTH),
+
+
+** GEM
+*** Render
+    (GEM_CLOSE, drm_gem_close_ioctl, UNLOCKED | RENDER),
+*** Authenticated
+    (GEM_FLINK, drm_gem_flink_ioctl, AUTH | UNLOCKED),
+    (GEM_OPEN, drm_gem_open_ioctl, AUTH | UNLOCKED),
+
+** Modesetting (always control)
+*** Unlocked (and control)
+    (MODE_GETRESOURCES, drm_mode_getresources, CONTROL | UNLOCKED),
+    (MODE_GETPLANERESOURCES, drm_mode_getplane_res, CONTROL | UNLOCKED),
+    (MODE_GETCRTC, drm_mode_getcrtc, CONTROL | UNLOCKED),
+    (MODE_GETPLANE, drm_mode_getplane, CONTROL | UNLOCKED),
+    (MODE_GETGAMMA, drm_mode_gamma_get_ioctl, UNLOCKED),
+    (MODE_GETENCODER, drm_mode_getencoder, CONTROL | UNLOCKED),
+    (MODE_GETCONNECTOR, drm_mode_getconnector, CONTROL | UNLOCKED),
+    (MODE_GETPROPERTY, drm_mode_getproperty_ioctl, CONTROL | UNLOCKED),
+    (MODE_GETPROPBLOB, drm_mode_getblob_ioctl, CONTROL | UNLOCKED),
+    (MODE_GETFB, drm_mode_getfb, CONTROL | UNLOCKED),
+    (MODE_ADDFB, drm_mode_addfb, CONTROL | UNLOCKED),
+    (MODE_ADDFB2, drm_mode_addfb2, CONTROL | UNLOCKED),
+    (MODE_RMFB, drm_mode_rmfb, CONTROL | UNLOCKED),
+    (MODE_CREATE_DUMB, drm_mode_create_dumb_ioctl, CONTROL | UNLOCKED),
+    (MODE_MAP_DUMB, drm_mode_mmap_dumb_ioctl, CONTROL | UNLOCKED),
+    (MODE_DESTROY_DUMB, drm_mode_destroy_dumb_ioctl, CONTROL | UNLOCKED),
+    (MODE_OBJ_GETPROPERTIES, drm_mode_obj_get_properties_ioctl, CONTROL | UNLOCKED),
+    (MODE_CREATEPROPBLOB, drm_mode_createblob_ioctl, CONTROL | UNLOCKED),
+    (MODE_DESTROYPROPBLOB, drm_mode_destroyblob_ioctl, CONTROL | UNLOCKED),
+*** Master
+    (MODE_SETCRTC, drm_mode_setcrtc, MASTER | CONTROL | UNLOCKED),
+    (MODE_SETPLANE, drm_mode_setplane, MASTER | CONTROL | UNLOCKED),
+    (MODE_CURSOR, drm_mode_cursor_ioctl, MASTER | CONTROL | UNLOCKED),
+    (MODE_SETGAMMA, drm_mode_gamma_set_ioctl, MASTER | UNLOCKED),
+    (MODE_ATTACHMODE, drm_noop, MASTER | CONTROL | UNLOCKED),
+    (MODE_DETACHMODE, drm_noop, MASTER | CONTROL | UNLOCKED),
+    (MODE_SETPROPERTY, drm_mode_connector_property_set_ioctl, MASTER | CONTROL | UNLOCKED),
+    (MODE_PAGE_FLIP, drm_mode_page_flip_ioctl, MASTER | CONTROL | UNLOCKED),
+    (MODE_DIRTYFB, drm_mode_dirtyfb_ioctl, MASTER | CONTROL | UNLOCKED),
+    (MODE_OBJ_SETPROPERTY, drm_mode_obj_set_property_ioctl, MASTER | CONTROL | UNLOCKED),
+    (MODE_CURSOR2, drm_mode_cursor2_ioctl, MASTER | CONTROL | UNLOCKED),
+    (MODE_ATOMIC, drm_mode_atomic_ioctl, MASTER | CONTROL | UNLOCKED),
+
+* Design
+
+We must have the following traits:
+
+** Unlocked
+   Everything
+
+** Authenticated
+   Not sure what this is
+
+** Master
+   There can only be one. It can be revoked at any time.
+
+** Root
+   It appears everything that requires ROOT requires MASTER except ADD_CTX
+
+** Rendering
+   Almost nothing requires RENDER.
+
+** Control
+   Only modesetting functionality.
+
+* Auth and Magic
+
+1. An unauthenticated process gets a unique token using GET_MAGIC and passes it
+   to the Master
+2. The Master uses AUTH_MAGIC on the token to authenticate the process.
+
+* Unique and Version
+
+GET_UNIQUE returns the BusId of the device. This will not work until SET_VERSION
+is called.
+SET_UNIQUE is deprecated, and will result in an invalid op if used with modern
+kernels.
+
+GET_VERSION returns the driver version information.
+SET_VERSION sets the interface version we're using. Usually 1.4, but could
+possibly be 1.1. Let's assume this is deprecated.
