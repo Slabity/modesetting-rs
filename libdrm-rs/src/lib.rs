@@ -24,9 +24,9 @@ use self::result::{Result, ErrorKind};
 #[derive(Debug)]
 pub struct DriverInfo {
     ver: (i32, i32, i32),
-    name: Buffer<c_char>,
-    date: Buffer<c_char>,
-    desc: Buffer<c_char>
+    name: Array<c_char>,
+    date: Array<c_char>,
+    desc: Array<c_char>
 }
 
 #[derive(Debug)]
@@ -83,6 +83,7 @@ pub trait DRMDevice : AsRawFd {
 }
 
 /// A DRM device providing an unprivileged DRM functionality.
+#[derive(Debug)]
 pub struct Device<T>(T) where T: AsRawFd;
 
 impl<T> AsRawFd for Device<T> where T: AsRawFd {
