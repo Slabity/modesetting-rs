@@ -4,23 +4,38 @@ use super::super::result::*;
 
 use std::os::unix::io::{RawFd, AsRawFd};
 
-#[derive(Debug, Clone, Copy)]
-pub struct ConnectorId(pub ResourceId);
+trait AsRawId {
+    fn as_raw_id(&self) -> ResourceId { self.0 }
+}
 
-#[derive(Debug, Clone, Copy)]
-pub struct EncoderId(pub ResourceId);
+pub trait Resource<T, U> where T: AsRawFd, U: AsRawId {
+    fn resource_type(&self) -> ObjectType;
+    fn get(device: &T, id: U) -> Result<Self>;
+}
 
-#[derive(Debug, Clone, Copy)]
-pub struct CrtcId(pub ResourceId);
+#[derive(Debug, Copy)]
+pub struct ConnectorId(ResourceId);
+impl AsRawId for ConnectorId {}
 
-#[derive(Debug, Clone, Copy)]
-pub struct FramebufferId(pub ResourceId);
+#[derive(Debug, Copy)]
+pub struct EncoderId(ResourceId);
+impl AsRawId for EncoderId {}
 
-#[derive(Debug, Clone, Copy)]
-pub struct PlaneId(pub ResourceId);
+#[derive(Debug, Copy)]
+pub struct CrtcId(ResourceId);
+impl AsRawId for CrtcId {}
 
-#[derive(Debug, Clone, Copy)]
-pub struct PropertyId(pub ResourceId);
+#[derive(Debug, Copy)]
+pub struct FramebufferId(ResourceId);
+impl AsRawId for FramebufferId {}
+
+#[derive(Debug, Copy)]
+pub struct PlaneId(ResourceId);
+impl AsRawId for PlaneId {}
+
+#[derive(Debug, Copy)]
+pub struct PropertyId(ResourceId);
+impl AsRawId for PropertyId {}
 
 pub type GammaLength = u32;
 
@@ -32,24 +47,6 @@ pub struct Connector {
     pub encoders: Array<EncoderId>
 }
 
-impl Connector {
-    pub fn get<T>(device: &T, id: ConnectorId) -> Result<Connector> where T: AsRawFd {
-        let mut raw: drm_mode_get_connector = Default::default();
-        raw.connector_id = id.0;
-        let props = ffi_buf!(raw.props_ptr, raw.count_props);
-        let encs = ffi_buf!(raw.encoders_ptr, raw.count_encoders);
-        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETCONNECTOR, &mut raw);
-
-        let con = Connector {
-            id: id,
-            properties: props,
-            encoders: encs
-        };
-
-        Ok(con)
-    }
-}
-
 #[derive(Debug)]
 pub struct Encoder {
     pub id: EncoderId,
@@ -59,45 +56,13 @@ pub struct Encoder {
     // TODO: possible_clones
 }
 
-impl Encoder {
-    pub fn get<T>(device: &T, id: EncoderId) -> Result<Encoder> where T: AsRawFd {
-        let mut raw: drm_mode_get_encoder = Default::default();
-        raw.encoder_id = id.0;
-        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETENCODER, &mut raw);
-
-        let enc = Encoder {
-            id: id,
-            crtc_id: CrtcId(raw.crtc_id)
-        };
-
-        Ok(enc)
-    }
-}
-
 #[derive(Debug)]
 pub struct Crtc {
     pub id: CrtcId,
     pub size: (u32, u32),
-    // TODO: drm_mode_modeinfo
+    // TODO: mode
     pub fb: FramebufferId,
     pub gamma_length: GammaLength
-}
-
-impl Crtc {
-    pub fn get<T>(device: &T, id: CrtcId) -> Result<Crtc> where T: AsRawFd {
-        let mut raw: drm_mode_crtc = Default::default();
-        raw.crtc_id = id.0;
-        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETCRTC, &mut raw);
-
-        let crtc = Crtc {
-            id: id,
-            size: (raw.x, raw.y),
-            fb: FramebufferId(raw.fb_id),
-            gamma_length: raw.gamma_size
-        };
-
-        Ok(crtc)
-    }
 }
 
 #[derive(Debug)]
@@ -106,26 +71,8 @@ pub struct Framebuffer {
     pub size: (u32, u32),
     pub pitch: u32,
     pub bpp: u32,
-    // TODO: Handle
+    // TODO: Handle?
     pub depth: u32
-}
-
-impl Framebuffer {
-    pub fn get<T>(device: &T, id: FramebufferId) -> Result<Framebuffer> where T: AsRawFd {
-        let mut raw: drm_mode_fb_cmd = Default::default();
-        raw.fb_id = id.0;
-        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETFB, &mut raw);
-
-        let fb = Framebuffer {
-            id: id,
-            size: (raw.width, raw.height),
-            pitch: raw.pitch,
-            bpp: raw.bpp,
-            depth: raw.depth
-        };
-
-        Ok(fb)
-    }
 }
 
 #[derive(Debug)]
@@ -137,23 +84,6 @@ pub struct Plane {
     // TODO: possible_crtcs
     pub gamma_length: GammaLength
     // TODO: formats
-}
-
-impl Plane {
-    pub fn get<T>(device: &T, id: PlaneId) -> Result<Plane> where T: AsRawFd {
-        let mut raw: drm_mode_get_plane = Default::default();
-        raw.plane_id = id.0;
-        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETPLANE, &mut raw);
-
-        let plane = Plane {
-            id: id,
-            crtc_id: CrtcId(raw.crtc_id),
-            fb_id: FramebufferId(raw.fb_id),
-            gamma_length: raw.gamma_size,
-        };
-
-        Ok(plane)
-    }
 }
 
 #[derive(Debug)]
@@ -176,32 +106,107 @@ pub enum ObjectType {
     Unknown = DRM_MODE_OBJECT_ANY as isize
 }
 
-trait Resource {
-    fn resource_type(&self) -> ObjectType;
-    fn resource_id(&self) -> ResourceId;
+impl<T> Resource<T, ConnectorId> for Connector where T: AsRawFd {
+    fn resource_type(&self) -> ObjectType {
+        ObjectType::Connector
+    }
+
+    fn get(device: &T, id: ConnectorId) -> Result<Self> {
+        let mut raw: drm_mode_get_connector = Default::default();
+        raw.connector_id = id.0;
+        let props = ffi_buf!(raw.props_ptr, raw.count_props);
+        let encs = ffi_buf!(raw.encoders_ptr, raw.count_encoders);
+        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETCONNECTOR, &mut raw);
+
+        let con = Connector {
+            id: id,
+            properties: props,
+            encoders: encs
+        };
+
+        Ok(con)
+    }
 }
 
-impl Resource for Connector {
-    fn resource_type(&self) -> ObjectType { ObjectType::Connector }
-    fn resource_id(&self) -> ResourceId { self.id.0 }
+impl<T> Resource<T, EncoderId> for Encoder where T: AsRawFd {
+    fn resource_type(&self) -> ObjectType {
+        ObjectType::Encoder
+    }
+
+    fn get(device: &T, id: EncoderId) -> Result<Self> {
+        let mut raw: drm_mode_get_encoder = Default::default();
+        raw.encoder_id = id.0;
+        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETENCODER, &mut raw);
+
+        let enc = Encoder {
+            id: id,
+            crtc_id: CrtcId(raw.crtc_id)
+        };
+
+        Ok(enc)
+    }
 }
 
-impl Resource for Encoder {
-    fn resource_type(&self) -> ObjectType { ObjectType::Encoder }
-    fn resource_id(&self) -> ResourceId { self.id.0 }
+impl<T> Resource<T, CrtcId> for Crtc where T: AsRawFd {
+    fn resource_type(&self) -> ObjectType {
+        ObjectType::Crtc
+    }
+
+    fn get(device: &T, id: CrtcId) -> Result<Self> {
+        let mut raw: drm_mode_crtc = Default::default();
+        raw.crtc_id = id.0;
+        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETCRTC, &mut raw);
+
+        let crtc = Crtc {
+            id: id,
+            size: (raw.x, raw.y),
+            fb: FramebufferId(raw.fb_id),
+            gamma_length: raw.gamma_size
+        };
+
+        Ok(crtc)
+    }
 }
 
-impl Resource for Crtc {
-    fn resource_type(&self) -> ObjectType { ObjectType::Crtc }
-    fn resource_id(&self) -> ResourceId { self.id.0 }
+impl<T> Resource<T, FramebufferId> for Framebuffer where T: AsRawFd {
+    fn resource_type(&self) -> ObjectType {
+        ObjectType::Framebuffer
+    }
+
+    fn get(device: &T, id: FramebufferId) -> Result<Self> {
+        let mut raw: drm_mode_fb_cmd = Default::default();
+        raw.fb_id = id.0;
+        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETFB, &mut raw);
+
+        let fb = Framebuffer {
+            id: id,
+            size: (raw.width, raw.height),
+            pitch: raw.pitch,
+            bpp: raw.bpp,
+            depth: raw.depth
+        };
+
+        Ok(fb)
+    }
 }
 
-impl Resource for Framebuffer {
-    fn resource_type(&self) -> ObjectType { ObjectType::Framebuffer }
-    fn resource_id(&self) -> ResourceId { self.id.0 }
-}
+impl<T> Resource<T, PlaneId> for Plane where T: AsRawFd {
+    fn resource_type(&self) -> ObjectType {
+        ObjectType::Plane
+    }
 
-impl Resource for Plane {
-    fn resource_type(&self) -> ObjectType { ObjectType::Plane }
-    fn resource_id(&self) -> ResourceId { self.id.0 }
+    fn get(device: &T, id: PlaneId) -> Result<Self> {
+        let mut raw: drm_mode_get_plane = Default::default();
+        raw.plane_id = id.0;
+        ioctl!(device, MACRO_DRM_IOCTL_MODE_GETPLANE, &mut raw);
+
+        let plane = Plane {
+            id: id,
+            crtc_id: CrtcId(raw.crtc_id),
+            fb_id: FramebufferId(raw.fb_id),
+            gamma_length: raw.gamma_size,
+        };
+
+        Ok(plane)
+    }
 }
