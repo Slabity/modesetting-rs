@@ -27,7 +27,6 @@ fn enumerate() {
 
     for &id in res.crtcs().iter() {
         let crtc = card.crtc(id).unwrap();
-        card.gamma(id, crtc.gamma_length).unwrap();
     }
 
     for &id in planes.planes().iter() {

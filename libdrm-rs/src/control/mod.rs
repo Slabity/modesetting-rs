@@ -1,9 +1,7 @@
 use drm_sys::*;
 use super::util::*;
 use super::result::*;
-
-use std::os::unix::io::{RawFd, AsRawFd};
-use std::mem;
+use super::DRMDevice;
 
 pub mod resource;
 pub mod buffer;
@@ -69,7 +67,7 @@ impl PlaneResourceIds {
 
 /// Methods for devices that provide control (modesetting) functionality that do
 /// not require being the DRM Master.
-pub trait Control : AsRawFd {
+pub trait Control : DRMDevice + Sized {
     /// Attempts to read the list of all resource ids.
     fn resource_ids(&self) -> Result<ResourceIds> {
         let mut raw: drm_mode_card_res = Default::default();
@@ -107,51 +105,34 @@ pub trait Control : AsRawFd {
     }
 
     /// Attempts to get a connector given its id.
-    fn connector(&self, id: ConnectorId) -> Result<Connector> where Self: Sized {
-        Connector::get(self, id)
+    fn connector(&self, id: ConnectorId) -> Result<Connector> {
+        Connector::from_device_and_id(self, id)
     }
 
     /// Attempts to get an encoder given its id.
-    fn encoder(&self, id: EncoderId) -> Result<Encoder> where Self: Sized {
-        Encoder::get(self, id)
+    fn encoder(&self, id: EncoderId) -> Result<Encoder> {
+        Encoder::from_device_and_id(self, id)
     }
 
     /// Attempts to get a crtc given its id.
-    fn crtc(&self, id: CrtcId) -> Result<Crtc> where Self: Sized {
-        Crtc::get(self, id)
+    fn crtc(&self, id: CrtcId) -> Result<Crtc> {
+        Crtc::from_device_and_id(self, id)
     }
 
     /// Attempts to get a framebuffer given its id.
-    fn framebuffer(&self, id: FramebufferId) -> Result<Framebuffer> where Self: Sized {
-        Framebuffer::get(self, id)
+    fn framebuffer(&self, id: FramebufferId) -> Result<Framebuffer> {
+        Framebuffer::from_device_and_id(self, id)
     }
 
     /// Attempts to get a plane given its id.
-    fn plane(&self, id: PlaneId) -> Result<Plane> where Self: Sized {
-        Plane::get(self, id)
+    fn plane(&self, id: PlaneId) -> Result<Plane> {
+        Plane::from_device_and_id(self, id)
     }
 
+    /// Attempts to get a Crtc's Gamma Lookup Table (LUT) given its CrtcId.
     fn gamma(&self, id: CrtcId, len: GammaLength) -> Result<Gamma> {
-        let mut raw: drm_mode_crtc_lut = Default::default();
-        raw.crtc_id = id.0;
-        raw.gamma_size = len;
-        let red = ffi_buf!(raw.red, len);
-        let green = ffi_buf!(raw.green, len);
-        let blue = ffi_buf!(raw.blue, len);
-        ioctl!(self, MACRO_DRM_IOCTL_MODE_GETGAMMA, &mut raw);
-
-        let gamma = Gamma {
-            red: red,
-            green: green,
-            blue: blue,
-        };
-
-        Ok(gamma)
+        id.gamma(self, len)
     }
-
-    fn property(&self) -> () { unimplemented!() }
-    fn proberty_blob(&self) -> () { unimplemented!() }
-
 
     // Create a Framebuffer from an object that implements CreateFramebuffer
     fn create_framebuffer<T>(&self, buffer: &T) -> Result<FramebufferId>
@@ -165,7 +146,11 @@ pub trait Control : AsRawFd {
         raw.handle = buffer.handle().0;
         ioctl!(self, MACRO_DRM_IOCTL_MODE_ADDFB, &mut raw);
 
-        Ok(FramebufferId(raw.fb_id))
+        let id = unsafe {
+            FramebufferId::from_raw_id(raw.fb_id)
+        };
+
+        Ok(id)
     }
 
     // TODO: Figure out a buffer2 trait?
@@ -179,25 +164,27 @@ pub trait Control : AsRawFd {
         Ok(())
     }
 
-    fn dumbbuffer<'a>(&'a self, size: (u32, u32), bpp: u8) -> Result<DumbBuffer<'a, Self>> where Self: Sized {
-        DumbBuffer::new(self, size, bpp)
-    }
+    fn dumbbuffer<'a>(&'a self, size: (u32, u32), bpp: u8) ->
+        Result<DumbBuffer<'a, Self>> {
+            DumbBuffer::new(self, size, bpp)
+        }
 
+    // TODO: For simple displaying
     fn map_dumbbuffer(&self) -> () { unimplemented!() }
 
-    fn properties(&self, id: ResourceId, obj_type: ObjectType) -> Result<()> {
-        let mut raw: drm_mode_obj_get_properties = Default::default();
-        raw.obj_id = id;
-        raw.obj_type = obj_type as u32;
-        ioctl!(self, MACRO_DRM_IOCTL_MODE_OBJ_GETPROPERTIES, &raw);
-        let ids = ffi_buf!(raw.props_ptr, raw.count_props);
-        let vals = ffi_buf!(raw.prop_values_ptr, raw.count_props);
-        ioctl!(self, MACRO_DRM_IOCTL_MODE_OBJ_GETPROPERTIES, &raw);
+    // TODO: For atomic modesetting
+    fn properties(&self) -> Result<()> { unimplemented!() }
 
-        Ok(())
-    }
+    // TODO: For atomic modesetting
+    fn property(&self) -> () { unimplemented!() }
 
+    // TODO: For atomic modesetting
+    fn proberty_blob(&self) -> () { unimplemented!() }
+
+    // TODO: For atomic modesetting
     fn create_property_blob(&self) -> () { unimplemented!() }
+
+    // TODO: For atomic modesetting
     fn removeproperty_blob(&self) -> () { unimplemented!() }
 }
 

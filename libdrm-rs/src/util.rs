@@ -9,7 +9,7 @@ pub use std::mem;
 pub const SM_SIZE: usize = 32;
 pub type Array<T> = Vec<T>;
 
-pub type ResourceId = u32;
+pub type RawId = u32;
 
 macro_rules! ioctl {
     ( $card:expr, $code:expr, $obj:expr ) => ( unsafe {

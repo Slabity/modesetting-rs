@@ -6,7 +6,7 @@ use std::os::unix::io::{RawFd, AsRawFd};
 use std::mem;
 
 #[derive(Debug, Clone, Copy)]
-pub struct BufferId(pub ResourceId);
+pub struct BufferId(pub RawId);
 
 #[derive(Debug)]
 pub struct DumbBuffer<'a, T> where T: 'a + AsRawFd + Sized {
