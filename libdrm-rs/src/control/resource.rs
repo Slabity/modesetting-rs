@@ -81,13 +81,14 @@ impl ResourceId for CrtcId {
 impl AsResourceId<Self> for CrtcId {
     fn as_resource_id(&self) -> Self { *self }
 }
-impl CrtcId {
+
+impl AsResourceId<CrtcId> {
     /// Given the length of the Gamma's Lookup Table (LUT), attempt to acquire
     /// the Gamma value of the Crtc represented by the CrtcId.
     pub fn gamma<T>(&self, dev: &T, len: GammaLength) -> Result<Gamma>
         where T: Control {
         let mut raw: drm_mode_crtc_lut = Default::default();
-        raw.crtc_id = self.as_raw_id();
+        raw.crtc_id = self.as_resource_id().as_raw_id();
         raw.gamma_size = len;
         let red = ffi_buf!(raw.red, len);
         let green = ffi_buf!(raw.green, len);
@@ -95,10 +96,10 @@ impl CrtcId {
         ioctl!(dev, MACRO_DRM_IOCTL_MODE_GETGAMMA, &mut raw);
 
         let gamma = Gamma {
-        red: red,
-        green: green,
-        blue: blue,
-    };
+            red: red,
+            green: green,
+            blue: blue,
+        };
 
         Ok(gamma)
     }

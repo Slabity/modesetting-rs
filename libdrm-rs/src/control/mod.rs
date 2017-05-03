@@ -6,6 +6,7 @@ use super::DRMDevice;
 pub mod resource;
 pub mod buffer;
 use self::resource::*;
+use self::resource::AsResourceId;
 use self::buffer::*;
 
 #[derive(Debug)]
@@ -130,9 +131,10 @@ pub trait Control : DRMDevice + Sized {
     }
 
     /// Attempts to get a Crtc's Gamma Lookup Table (LUT) given its CrtcId.
-    fn gamma(&self, id: CrtcId, len: GammaLength) -> Result<Gamma> {
-        id.gamma(self, len)
-    }
+    //fn gamma<T>(&self, id: &T, len: GammaLength) -> Result<Gamma> where T: AsResourceId<CrtcId> {
+    // TODO: Figure out why this won't work:
+    //    id.gamma(self, len)
+    //}
 
     // Create a Framebuffer from an object that implements CreateFramebuffer
     fn create_framebuffer<T>(&self, buffer: &T) -> Result<FramebufferId>
@@ -188,3 +190,5 @@ pub trait Control : DRMDevice + Sized {
     fn removeproperty_blob(&self) -> () { unimplemented!() }
 }
 
+pub trait MasterControl : DRMMaster + Control {
+}

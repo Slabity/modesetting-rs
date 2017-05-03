@@ -52,7 +52,7 @@ pub trait DRMDevice : AsRawFd {
     /// Generates and returns a magic token unique to the current process. This
     /// token can be used to authenticate with the DRM Master.
     fn magic(&self) -> Result<AuthToken> {
-        let mut raw: drm_auth_t = Default::default();
+        let raw: drm_auth_t = Default::default();
         ioctl!(self, MACRO_DRM_IOCTL_GET_MAGIC, &raw);
         Ok(AuthToken(raw.magic))
     }
@@ -66,7 +66,7 @@ pub trait DRMDevice : AsRawFd {
     /// Tells the DRM device whether we understand or do not understand a
     /// particular capability. Some features, such as atomic modesetting,
     /// require informing the device that the process can use such features
-    /// before will expose them.
+    /// before it will expose them.
     fn set_client_cap(&self, cap: ClientCapability, set: bool) -> Result<()> {
         let mut raw: drm_set_client_cap = Default::default();
         raw.capability = cap as u64;
@@ -80,6 +80,14 @@ pub trait DRMDevice : AsRawFd {
     fn wait_vblan(&self) -> () {
         unimplemented!()
     }
+}
+
+/// A trait for DRM devices that do not hold the master lock.
+pub trait DRMUnprivileged : DRMDevice {
+}
+
+/// A trait for DRM devices that hold the DRM Master lock.
+pub trait DRMMaster : DRMDevice {
 }
 
 /// A DRM device providing an unprivileged DRM functionality.
