@@ -404,35 +404,35 @@ impl<'a> Connectors<'a> {
 #[derive(Debug, PartialEq, Clone, Copy)]
 /// The type of interface a `Connector` is.
 pub enum ConnectorInterface {
-    Unknown = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Unknown as isize,
-    VGA = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_VGA as isize,
-    DVII = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DVII as isize,
-    DVID = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DVID as isize,
-    DVIA = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DVIA as isize,
-    Composite = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Composite as isize,
-    SVideo = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_SVIDEO as isize,
-    LVDS = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_LVDS as isize,
-    Component = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_Component as isize,
-    NinePinDIN = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_9PinDIN as isize,
-    DisplayPort = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DisplayPort as isize,
-    HDMIA = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_HDMIA as isize,
-    HDMIB = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_HDMIB as isize,
-    TV = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_TV as isize,
-    EDP = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_eDP as isize,
-    Virtual = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_VIRTUAL as isize,
-    DSI = ffi::ConnectorInterface::FFI_DRM_MODE_CONNECTOR_DSI as isize,
+    Unknown = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_Unknown as isize,
+    VGA = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_VGA as isize,
+    DVII = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_DVII as isize,
+    DVID = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_DVID as isize,
+    DVIA = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_DVIA as isize,
+    Composite = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_Composite as isize,
+    SVideo = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_SVIDEO as isize,
+    LVDS = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_LVDS as isize,
+    Component = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_Component as isize,
+    NinePinDIN = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_9PinDIN as isize,
+    DisplayPort = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_DisplayPort as isize,
+    HDMIA = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_HDMIA as isize,
+    HDMIB = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_HDMIB as isize,
+    TV = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_TV as isize,
+    EDP = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_eDP as isize,
+    Virtual = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_VIRTUAL as isize,
+    DSI = ffi::ConnectorInterface_FFI_DRM_MODE_CONNECTOR_DSI as isize,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 /// The state of a `Connector`.
 pub enum ConnectorState {
     /// The `Connector` is plugged in and ready for use.
-    Connected = ffi::Connection::FFI_DRM_MODE_CONNECTED as isize,
+    Connected = ffi::Connection_FFI_DRM_MODE_CONNECTED as isize,
     /// The `Connector` is unplugged.
-    Disconnected = ffi::Connection::FFI_DRM_MODE_DISCONNECTED as isize,
+    Disconnected = ffi::Connection_FFI_DRM_MODE_DISCONNECTED as isize,
     /// Sometimes a `Connector` will have an unkown state. It is safe to use,
     /// but may not provide the expected functionality.
-    Unknown = ffi::Connection::FFI_DRM_MODE_UNKNOWN as isize
+    Unknown = ffi::Connection_FFI_DRM_MODE_UNKNOWN as isize
 }
 
 impl From<u32> for ConnectorInterface {
